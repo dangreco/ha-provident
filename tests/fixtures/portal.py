@@ -9,6 +9,7 @@ import threading
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 from zoneinfo import ZoneInfo
@@ -24,6 +25,17 @@ REPORT = "/api/internal/reports/quickreport"
 LOGIN = "/login/LoginService.aspx/ProcessLogin"
 CHECK_LOGIN = "/login/LoginService.aspx/CheckLogin"
 DETAILS = "/secure/AccountInfo.aspx/GetDetails"
+# Provident's corporate site (pemi.com), served from the same fake host.
+RATES_LOGIN = "/do-rates-login"
+RATES_PAGE = "/rates-and-fees"
+
+#: The real rates page (trimmed), as served for a signed-in location.
+RATES_HTML = (Path(__file__).parent / "rates_page.html").read_text()
+#: What the rates site serves without a session.
+RATES_SIGN_IN = (
+    '<form action="/do-rates-login" method="POST">'
+    '<input name="CustomerNumber"><input name="LocationID"></form>'
+)
 
 METERS = [
     {
@@ -101,6 +113,11 @@ class Portal:
     _lock: threading.Lock = field(default_factory=threading.Lock)
     #: Rotating this expires every logged-in client.
     session_token: str = "s1"
+    #: Rates page HTML for a signed-in location; rotating ``rates_session`` expires it.
+    rates_html: str = RATES_HTML
+    rates_session: str = "r1"
+    #: Status the rates site answers with instead (simulates an outage), if set.
+    rates_status_error: int | None = None
 
     def hour_value(self, utility: str, day: date, hour: int) -> float:
         idx = (day - self.origin).days * 24 + hour
@@ -165,6 +182,9 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         path = url.path
+        if path in (RATES_LOGIN, RATES_PAGE):
+            self._rates(path, body)
+            return
         if path == LOGIN:
             self._login(json.loads(body) if body else {})
             return
@@ -206,6 +226,42 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(200, page_method({"success": True}))
         else:
             self._send(200, page_method({"success": False, "msg": "Invalid Username or Password"}))
+
+    def _rates(self, path: str, body: bytes) -> None:
+        if self.portal.rates_status_error is not None:
+            self._send_text(self.portal.rates_status_error, "<p>Service unavailable</p>")
+            return
+        if path == RATES_LOGIN:
+            # Only the location (the portal username) is checked, like the real site.
+            form = parse_qs(body.decode())
+            ok = form.get("LocationID") == [USERNAME] and bool(form.get("CustomerNumber"))
+            payload = json.dumps(
+                {"response": "ok", "message": "", "error": 0}
+                if ok
+                else {"response": "no", "message": "Invalid login.", "error": 0}
+            )
+            cookie = f"PHPSESSID={self.portal.rates_session}; Path=/" if ok else None
+            self._send_text(200, payload, "application/json", cookie)
+            return
+        cookie = self.headers.get("Cookie") or ""
+        signed_in = f"PHPSESSID={self.portal.rates_session}" in cookie
+        self._send_text(200, self.portal.rates_html if signed_in else RATES_SIGN_IN)
+
+    def _send_text(
+        self,
+        status: int,
+        text: str,
+        content_type: str = "text/html; charset=UTF-8",
+        cookie: str | None = None,
+    ) -> None:
+        payload = text.encode()
+        self.send_response(status)
+        if cookie:
+            self.send_header("Set-Cookie", cookie)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
 
     def _graphs(self, query: dict[str, list[str]], now: datetime) -> None:
         start = date.fromisoformat(query["startDate"][0])

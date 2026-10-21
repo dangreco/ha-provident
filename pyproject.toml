@@ -23,7 +23,7 @@ dev = [
   "homeassistant==2026.10.2",
   # Stubs have no patch releases.
   "homeassistant-stubs>=2026.10.0,<2026.11",
-  "provident==0.2.2",
+  "provident==0.3.1",
   "pytest-homeassistant-custom-component==0.13.373",
   "mypy>=1.14",
 ]
@@ -57,7 +57,7 @@ ignore = [
 # HA platform signatures require a hass argument even when unused.
 "custom_components/provident/sensor.py" = ["ARG001"]
 "custom_components/provident/__init__.py" = ["ARG001"]
-"custom_components/provident/config_flow.py" = ["ARG002"]
+"custom_components/provident/config_flow.py" = ["ARG002", "ARG004"]
 "custom_components/provident/diagnostics.py" = ["ARG001"]
 
 [tool.mypy]

@@ -25,6 +25,7 @@ type ProvidentConfigEntry = ConfigEntry[ProvidentCoordinator]
 async def async_setup_entry(hass: HomeAssistant, entry: ProvidentConfigEntry) -> bool:
     client = new_client()
     coordinator = ProvidentCoordinator(hass, entry, client)
+    await coordinator.async_load_state()
 
     await coordinator.async_login_or_raise()
 
@@ -66,6 +67,15 @@ def _make_stats_listener(hass: HomeAssistant, entry: ProvidentConfigEntry) -> Ca
 
 async def async_unload_entry(hass: HomeAssistant, entry: ProvidentConfigEntry) -> bool:
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ProvidentConfigEntry) -> None:
+    """Drop the stored rates and pricing state (statistics stay, like other integrations')."""
+    from homeassistant.helpers.storage import Store
+
+    from .coordinator import store_key
+
+    await Store[dict[str, object]](hass, 1, store_key(entry.entry_id)).async_remove()
 
 
 async def async_remove_config_entry_device(

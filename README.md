@@ -27,6 +27,17 @@ Each meter creates a device with three sensors:
 
 Up to 30 days of hourly usage is imported into the recorder as an external statistic per meter, named "<meter> <utility> hourly usage" (ID `provident:<serial>_hourly_consumption`). Use this statistic in the Energy dashboard.
 
+### Rates and cost
+
+With a price plan set in the options, electricity meters also get:
+- **Hourly cost statistic**: "<meter> Electricity hourly cost" (ID `provident:<serial>_hourly_cost`, CAD), priced hour by hour from the rates Provident publishes for your building.
+- **Current price**: energy price in effect now (CAD/kWh).
+- **Price period**: off-peak, mid-peak, on-peak, ultra-low overnight, weekend off-peak, tier 1, or tier 2.
+
+Prices follow the Ontario Energy Board's rules: summer and winter Time-of-Use hours, Ultra-Low Overnight hours, weekends and OEB holidays (including the next-weekday rule when a holiday falls on a weekend), and the tiered threshold (600 kWh per 30 days in summer, 1,000 in winter, counted per calendar month). Each hour uses the price that was in effect that day, so history spanning a November 1 price change is priced correctly.
+
+The cost covers **energy plus, optionally, Provident's administration and meter fees** (spread evenly over every hour of a 30-day month). It **excludes HST**, delivery, regulatory charges, and rebates, which Provident does not publish, so it will be lower than your bill. At low usage the fees can be most of the hourly cost.
+
 ## Data updates
 
 Data is polled every 15 minutes. The portal updates meters on different schedules:
@@ -34,6 +45,7 @@ Data is polled every 15 minutes. The portal updates meters on different schedule
 - **Water**: published hourly.
 - **Registers**: reflect the end of the last complete day.
 - **Hourly statistics**: each sync refetches a trailing 2-day window to pick up late or restated hours.
+- **Rates**: fetched once a day. If the rates site is down, the last rates are kept (also across restarts) and usage keeps updating. When Provident changes a price, the cost history is re-priced from the day it takes effect.
 
 ## Installation
 
@@ -59,6 +71,12 @@ Required parameters:
 
 One config entry is created per portal account. Use **Reconfigure** to update credentials.
 
+### Options
+
+Under Settings → Devices & services → **Provident** → **Configure**:
+- **Price plan**: None (default, no cost tracking), Time-of-Use, Ultra-Low Overnight, or Tiered. Use the plan on your Provident bill; the rates page lists every plan and doesn't say which one your building is on. Changing it re-prices the whole imported cost history.
+- **Include Provident fees**: add the administration and meter fees to each hour (default on).
+
 ## Removal
 
 1. Go to Settings → Devices & services → **Provident**.
@@ -70,12 +88,16 @@ Deleting the entry removes all associated devices, entities, and background poll
 
 - Only kWh and volume units are mapped (`kWh`, `Wh`, `MWh`, `m³`, `L`, `gal`, `ft³`, `ccf`). Unmapped units create plain sensors without statistics.
 - Electricity readings are delayed up to 24 hours by the portal.
+- Cost excludes HST, delivery, regulatory charges, and rebates (see [Rates and cost](#rates-and-cost)).
+- Only electricity is priced. EV charging meters are priced only if your rates page has its own EV charging section; they never borrow suite electricity prices. Water, gas, heating, and cooling rates aren't priced yet; if your rates page lists them, please share **Download diagnostics** in an issue.
+- Hours before the earliest price shown on the rates page get no cost row.
 
 ## Troubleshooting
 
 - **Sensors unavailable / cannot connect**: verify the portal is reachable in a browser. The integration retries automatically during portal downtime.
 - **Re-authentication requested**: the portal rejected the stored password. Click the notification or integration card to re-enter your password.
-- **Diagnostics**: select **Download diagnostics** on the integration page for a redacted debug export.
+- **Diagnostics**: select **Download diagnostics** on the integration page for a redacted debug export. It includes the rates read from the rates page and any rows that weren't recognized.
+- **No cost statistic or price sensors**: check that a price plan is set in the options, and that diagnostics show the plan's rates. A warning is logged if the rates page couldn't be read.
 
 ## Examples and use cases
 
@@ -85,6 +107,7 @@ Under Settings → Dashboards → Energy:
 - Electricity: **Electricity grid** → **Add consumption** → pick "<meter> Electricity hourly usage".
 - Water: **Water consumption** → **Add water source** → pick "<meter> <utility> hourly usage".
 - Don't also add the **Total usage** sensor for the same meter, or that meter's usage is counted twice.
+- Cost: with a price plan set, choose **Use an entity tracking the total costs** for the electricity consumption and pick "<meter> Electricity hourly cost".
 
 ### Daily notification automation
 
@@ -99,6 +122,21 @@ automation:
         data:
           title: "Electricity Yesterday"
           message: "Usage: {{ states('sensor.3105_electricity_usage_yesterday') }} kWh"
+```
+
+### Run appliances off-peak
+
+```yaml
+automation:
+  - alias: "Dishwasher off-peak"
+    trigger:
+      - trigger: state
+        entity_id: sensor.3105_electricity_price_period
+        to: "off_peak"
+    action:
+      - action: switch.turn_on
+        target:
+          entity_id: switch.dishwasher
 ```
 
 ## Development

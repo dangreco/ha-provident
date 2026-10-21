@@ -25,6 +25,10 @@ async def async_get_config_entry_diagnostics(
     return {
         "entry": async_redact_data(entry.as_dict(), TO_REDACT),
         "last_update_success": coordinator.last_update_success,
+        "rate_plan": str(coordinator.plan),
+        "include_fees": coordinator.include_fees,
+        # Published prices only; the rates page carries no personal data.
+        "rates": coordinator.rates.to_dict() if coordinator.rates else None,
         "meters": [
             {
                 "node_id": m.meter.node_id,
@@ -35,6 +39,7 @@ async def async_get_config_entry_diagnostics(
                 "register_error": m.register.error if m.register else None,
                 "today": m.daily.today,
                 "yesterday": m.daily.yesterday,
+                "priced": coordinator.tariff(m.meter) is not None,
             }
             for m in data.meters
         ],

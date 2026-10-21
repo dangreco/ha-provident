@@ -59,6 +59,15 @@ MAX_BACKFILL_DAYS = 365
 # Trailing window refetched each sync for late or restated hours.
 REFETCH_DAYS = 2
 
+# Options.
+CONF_RATE_PLAN = "rate_plan"
+CONF_INCLUDE_FEES = "include_fees"
+DEFAULT_INCLUDE_FEES = True
+
+# Provident publishes rates in Canadian dollars; prices change a couple of times a year.
+CURRENCY = "CAD"
+RATES_REFRESH = timedelta(hours=24)
+
 
 def meter_unit_info(meter: Meter) -> tuple[SensorDeviceClass | None, str, str]:
     """Return (device_class, unit, unit_class); unknown units give a plain sensor."""
