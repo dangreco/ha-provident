@@ -55,7 +55,7 @@ async def _sync(hass: HomeAssistant, entry: MockConfigEntry) -> None:
     await async_wait_recording_done(hass)
 
 
-async def test_first_import_backfills(
+async def test_install_backfills_30_days_and_today_so_far(
     recorder_mock: Recorder,
     freezer,
     hass: HomeAssistant,
@@ -69,7 +69,6 @@ async def test_first_import_backfills(
     assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
     await hass.async_block_till_done(wait_background_tasks=True)
     await async_wait_recording_done(hass)
-    await _sync(hass, mock_config_entry)
 
     coordinator = mock_config_entry.runtime_data
     window_day = coordinator.data.today - timedelta(days=BACKFILL_DAYS)
@@ -87,6 +86,13 @@ async def test_first_import_backfills(
         sums = [r["sum"] for r in rows]
         assert all(b >= a for a, b in zip(sums, sums[1:], strict=False))
         assert rows[-1]["start"] < frozen_now.timestamp()
+
+    cold_water_rows = await _stats(hass, COLD_WATER_ID)
+    today_midnight = bucket_start(coordinator.data.today, 0, dt_util.UTC).timestamp()
+    today_rows = [r for r in cold_water_rows if r["start"] >= today_midnight]
+    assert len(today_rows) == frozen_now.hour
+    for hour, row in enumerate(today_rows):
+        assert row["state"] == pytest.approx(portal.hour_value("Cold Water", coordinator.data.today, hour))
 
 
 async def test_states_match_portal(
