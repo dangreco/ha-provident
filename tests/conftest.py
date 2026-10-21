@@ -98,11 +98,11 @@ async def patch_client(portal: Any, hass: HomeAssistant) -> AsyncGenerator[None]
     with (
         patch(
             "custom_components.provident.new_client",
-            lambda: AsyncClient(base_url=portal.url),
+            lambda: AsyncClient(base_url=portal.url, rates_base_url=portal.url),
         ),
         patch(
             "custom_components.provident.coordinator.new_client",
-            lambda: AsyncClient(base_url=portal.url),
+            lambda: AsyncClient(base_url=portal.url, rates_base_url=portal.url),
         ),
     ):
         yield

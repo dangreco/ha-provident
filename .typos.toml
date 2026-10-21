@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-only
 
-# `hass` is Home Assistant's variable name.
+# `hass` is Home Assistant's variable name; `tou` is the OEB's Time-of-Use price plan.
 [default.extend-words]
 hass = "hass"
+tou = "tou"

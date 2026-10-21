@@ -6,12 +6,22 @@ import logging
 from typing import Any, override
 
 import probatio
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.config_entries import (
+    ConfigEntry,
+    ConfigFlow,
+    ConfigFlowResult,
+    OptionsFlowWithReload,
+)
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
+from homeassistant.core import callback
 from homeassistant.helpers.selector import (
+    BooleanSelector,
     NumberSelector,
     NumberSelectorConfig,
     NumberSelectorMode,
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
 )
 from provident import (
     DecodeError,
@@ -21,7 +31,16 @@ from provident import (
     TransportError,
 )
 
-from .const import CONF_BACKFILL_DAYS, DEFAULT_BACKFILL_DAYS, DOMAIN, MAX_BACKFILL_DAYS
+from .const import (
+    CONF_BACKFILL_DAYS,
+    CONF_INCLUDE_FEES,
+    CONF_RATE_PLAN,
+    DEFAULT_BACKFILL_DAYS,
+    DEFAULT_INCLUDE_FEES,
+    DOMAIN,
+    MAX_BACKFILL_DAYS,
+)
+from .rates import Plan
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -56,6 +75,11 @@ async def _async_validate(
 
 class ProvidentConfigFlow(ConfigFlow, domain=DOMAIN):
     VERSION = 1
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry) -> ProvidentOptionsFlow:
+        return ProvidentOptionsFlow()
 
     @override
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
@@ -155,3 +179,35 @@ def _schema(*, include_username: bool, include_backfill: bool) -> probatio.Schem
             )
         )
     return probatio.Schema(fields)
+
+
+class ProvidentOptionsFlow(OptionsFlowWithReload):
+    """Price plan for the cost statistic and price sensors; saving reloads the entry."""
+
+    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        if user_input is not None:
+            return self.async_create_entry(
+                data={
+                    CONF_RATE_PLAN: str(Plan(user_input[CONF_RATE_PLAN])),
+                    CONF_INCLUDE_FEES: bool(user_input[CONF_INCLUDE_FEES]),
+                }
+            )
+        options = self.config_entry.options
+        schema = probatio.Schema(
+            {
+                probatio.Required(
+                    CONF_RATE_PLAN, default=options.get(CONF_RATE_PLAN, str(Plan.NONE))
+                ): SelectSelector(
+                    SelectSelectorConfig(
+                        options=[str(p) for p in Plan],
+                        mode=SelectSelectorMode.LIST,
+                        translation_key=CONF_RATE_PLAN,
+                    )
+                ),
+                probatio.Required(
+                    CONF_INCLUDE_FEES,
+                    default=options.get(CONF_INCLUDE_FEES, DEFAULT_INCLUDE_FEES),
+                ): BooleanSelector(),
+            }
+        )
+        return self.async_show_form(step_id="init", data_schema=schema)

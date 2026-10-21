@@ -43,9 +43,30 @@
   },
   "entity": {
     "sensor": {
-      "total_usage": { "name": "Total usage" },
-      "today_usage": { "name": "Usage today" },
-      "yesterday_usage": { "name": "Usage yesterday" }
+      "total_usage": {
+        "name": "Total usage"
+      },
+      "today_usage": {
+        "name": "Usage today"
+      },
+      "yesterday_usage": {
+        "name": "Usage yesterday"
+      },
+      "current_price": {
+        "name": "Current price"
+      },
+      "price_period": {
+        "name": "Price period",
+        "state": {
+          "off_peak": "Off-peak",
+          "mid_peak": "Mid-peak",
+          "on_peak": "On-peak",
+          "ultra_low_overnight": "Ultra-low overnight",
+          "weekend_off_peak": "Weekend off-peak",
+          "tier_1": "Tier 1",
+          "tier_2": "Tier 2"
+        }
+      }
     }
   },
   "exceptions": {
@@ -66,6 +87,32 @@
     },
     "portal_call_failed": {
       "message": "{what} failed: {error}"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Provident rates",
+        "description": "Price your electricity with the rates Provident publishes for your building. The cost covers energy and, optionally, Provident's administration and meter fees; it excludes delivery, regulatory charges, rebates, and HST.",
+        "data": {
+          "rate_plan": "Price plan",
+          "include_fees": "Include Provident fees"
+        },
+        "data_description": {
+          "rate_plan": "The plan on your Provident bill. Changing it re-prices the imported cost history.",
+          "include_fees": "Spread the monthly administration and meter fees evenly over every hour."
+        }
+      }
+    }
+  },
+  "selector": {
+    "rate_plan": {
+      "options": {
+        "none": "None (no cost tracking)",
+        "tou": "Time-of-Use",
+        "ulo": "Ultra-Low Overnight",
+        "tiered": "Tiered"
+      }
     }
   }
 }

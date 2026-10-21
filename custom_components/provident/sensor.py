@@ -2,21 +2,25 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import TYPE_CHECKING, override
 
-from homeassistant.components.sensor import SensorEntity
+from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+from homeassistant.helpers.event import async_track_time_change
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 from provident import Meter
 
-from .const import DOMAIN, MANUFACTURER, UTILITY_LABEL, meter_unit_info
+from .const import CURRENCY, DOMAIN, MANUFACTURER, UTILITY_LABEL, meter_unit_info
 from .coordinator import ProvidentCoordinator
 from .models import MeterData
+from .rates import PLAN_PERIODS, Period, Tariff
 
 if TYPE_CHECKING:
     from . import ProvidentConfigEntry
@@ -65,11 +69,17 @@ async def async_setup_entry(
 def _entities_for_meter(
     coordinator: ProvidentCoordinator, meter: Meter
 ) -> list[ProvidentSensorEntity]:
-    return [
+    entities: list[ProvidentSensorEntity] = [
         ProvidentTotalUsageSensor(coordinator, meter),
         ProvidentTodaySensor(coordinator, meter),
         ProvidentYesterdaySensor(coordinator, meter),
     ]
+    if coordinator.tariff(meter) is not None:
+        entities += [
+            ProvidentPriceSensor(coordinator, meter),
+            ProvidentPeriodSensor(coordinator, meter),
+        ]
+    return entities
 
 
 def _device_info(meter: Meter) -> DeviceInfo:
@@ -179,3 +189,76 @@ class ProvidentYesterdaySensor(ProvidentSensorEntity):
     def native_value(self) -> float | None:
         data = self.meter_data
         return None if data is None else data.daily.yesterday
+
+
+class _HourlyTariffSensor(ProvidentSensorEntity):
+    """Recomputed from the tariff at each hour boundary and on every coordinator update."""
+
+    @override
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self.async_on_remove(async_track_time_change(self.hass, self._on_hour, minute=0, second=0))
+
+    @callback
+    def _on_hour(self, _now: datetime) -> None:
+        self.async_write_ha_state()
+
+    @property
+    def tariff(self) -> Tariff | None:
+        return self.coordinator.tariff(self.meter)
+
+    @property
+    @override
+    def available(self) -> bool:
+        return super().available and self.tariff is not None
+
+    def _now(self) -> tuple[datetime, float | None]:
+        now = dt_util.now()
+        data = self.meter_data
+        return now, None if data is None else data.month_to_date
+
+
+class ProvidentPriceSensor(_HourlyTariffSensor):
+    """Energy price in effect now (CAD/kWh), excluding Provident's fees and HST."""
+
+    _attr_translation_key = "current_price"
+    _attr_device_class = None
+    _attr_suggested_display_precision = 4
+
+    def __init__(self, coordinator: ProvidentCoordinator, meter: Meter) -> None:
+        super().__init__(coordinator, meter, "current_price")
+        self._attr_device_class = None
+        self._attr_native_unit_of_measurement = f"{CURRENCY}/kWh"
+
+    @property
+    @override
+    def native_value(self) -> float | None:
+        tariff = self.tariff
+        if tariff is None:
+            return None
+        now, month_to_date = self._now()
+        return tariff.price(now.date(), now.hour, month_to_date)
+
+
+class ProvidentPeriodSensor(_HourlyTariffSensor):
+    """Price period in effect now (off-peak, mid-peak, …)."""
+
+    _attr_translation_key = "price_period"
+    _attr_device_class = SensorDeviceClass.ENUM
+
+    def __init__(self, coordinator: ProvidentCoordinator, meter: Meter) -> None:
+        super().__init__(coordinator, meter, "price_period")
+        self._attr_device_class = SensorDeviceClass.ENUM
+        self._attr_native_unit_of_measurement = None
+        tariff = self.tariff
+        self._attr_options = [str(p) for p in PLAN_PERIODS[tariff.plan]] if tariff else []
+
+    @property
+    @override
+    def native_value(self) -> str | None:
+        tariff = self.tariff
+        if tariff is None:
+            return None
+        now, month_to_date = self._now()
+        period: Period | None = tariff.period(now.date(), now.hour, month_to_date)
+        return None if period is None else str(period)
