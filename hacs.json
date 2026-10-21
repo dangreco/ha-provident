@@ -1,0 +1,6 @@
+{
+  "name": "Provident",
+  "country": ["US", "CA"],
+  "render_readme": true,
+  "homeassistant": "2026.10.0"
+}

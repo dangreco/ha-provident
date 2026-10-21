@@ -1,0 +1,32 @@
+# Reference clones
+/.repos/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Home Assistant dev instance
+/.ha-config/
+
+# Nix
+/result
+.direnv
+.envrc
+
+# e2e credentials
+.env
+
+# Editors
+.idea/
+.vscode/
+*.swp
+
+# Generated locally
+/.pre-commit-config.yaml
+/ha_provident.egg-info/

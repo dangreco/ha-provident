@@ -1,0 +1,91 @@
+# SPDX-License-Identifier: GPL-3.0-only
+
+# Logic lives in scripts/release.py. Uses a GitHub App token because PRs opened with
+# GITHUB_TOKEN don't trigger CI. Secrets: RELEASE_APP_CLIENT_ID, RELEASE_APP_PRIVATE_KEY;
+# app permissions: contents, pull requests, issues (read/write).
+
+name: Release
+
+on:
+  push:
+    branches: [dev]
+  schedule:
+    # Just after midnight UTC, so a new month rolls the release PR over on its first day.
+    - cron: "17 0 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      released: ${{ steps.release.outputs.released }}
+      tag: ${{ steps.release.outputs.tag }}
+      sha: ${{ steps.release.outputs.sha }}
+    steps:
+      - name: App token
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-issues: write
+
+      # Full history and tags: the changelog is built from commits since the latest tag.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: dev
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Release
+        id: release
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: python3 scripts/release.py run --sha HEAD
+
+  promote:
+    name: Promote to main
+    needs: release
+    if: ${{ needs.release.outputs.released == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: App token
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+
+      # Fast-forward only; the API returns 422 if `main` is not an ancestor of the release.
+      - name: Fast-forward main to ${{ needs.release.outputs.tag }}
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ needs.release.outputs.sha }}
+          TAG: ${{ needs.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          tagged=$(gh api "repos/$REPO/commits/$TAG" --jq .sha)
+          if [[ $tagged != "$SHA" ]]; then
+            echo "::error::$TAG points at $tagged, expected released commit $SHA"
+            exit 1
+          fi
+          if gh api "repos/$REPO/git/ref/heads/main" --silent 2>/dev/null; then
+            gh api --method PATCH "repos/$REPO/git/refs/heads/main" -f sha="$SHA" -F force=false
+          else
+            gh api --method POST "repos/$REPO/git/refs" -f ref=refs/heads/main -f sha="$SHA"
+          fi
+          echo "main → $TAG ($SHA)" >>"$GITHUB_STEP_SUMMARY"

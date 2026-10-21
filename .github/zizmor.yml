@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-only
+
+rules:
+  # actionlint does not accept the `$/` syntax it suggests yet.
+  self-repository:
+    disable: true

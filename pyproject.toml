@@ -1,0 +1,74 @@
+# SPDX-License-Identifier: GPL-3.0-only
+
+[project]
+name = "ha-provident"
+description = "Home Assistant custom integration for the Provident (MeterConnex) utility portal"
+readme = "README.md"
+license = "GPL-3.0-only"
+license-files = ["LICENSE"]
+requires-python = ">=3.14.2"
+authors = [{ name = "Dan Greco", email = "git@dangre.co" }]
+keywords = ["home-assistant", "provident", "meterconnex", "energy", "water"]
+# Not a package: runtime deps live in the integration manifest.
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://github.com/dangreco/ha-provident"
+Repository = "https://github.com/dangreco/ha-provident"
+Issues = "https://github.com/dangreco/ha-provident/issues"
+
+[dependency-groups]
+dev = [
+  # Keep in step with custom_components/provident/manifest.json.
+  "homeassistant==2026.10.2",
+  # Stubs have no patch releases.
+  "homeassistant-stubs>=2026.10.0,<2026.11",
+  "provident==0.2.2",
+  "pytest-homeassistant-custom-component==0.13.373",
+  "mypy>=1.14",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "-v --strict-markers --strict-config -m 'not e2e'"
+markers = [
+  "e2e: talks to the real portal; needs PROVIDENT_USERNAME/PASSWORD (run with `-m e2e`)",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+extend-exclude = [".ha-config", ".repos"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "UP", "B", "SIM", "RET", "ARG", "PTH", "RUF"]
+ignore = [
+  "E501", # line length: ruff-format wraps what it can
+]
+
+[tool.ruff.lint.per-file-ignores]
+"**/__init__.py" = ["F401"]
+"tests/*" = ["ARG", "RUF"]
+# HA platform signatures require a hass argument even when unused.
+"custom_components/provident/sensor.py" = ["ARG001"]
+"custom_components/provident/__init__.py" = ["ARG001"]
+"custom_components/provident/config_flow.py" = ["ARG002"]
+"custom_components/provident/diagnostics.py" = ["ARG001"]
+
+[tool.mypy]
+strict = true
+files = ["custom_components/provident", "tests", "scripts/release.py"]
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+
+[[tool.mypy.overrides]]
+module = "pytest_homeassistant_custom_component.*"
+ignore_missing_imports = true

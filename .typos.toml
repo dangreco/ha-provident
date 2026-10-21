@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+
+# `hass` is Home Assistant's variable name.
+[default.extend-words]
+hass = "hass"

@@ -1,0 +1,113 @@
+# ha-provident
+
+Home Assistant integration for the [Provident](https://provident.meterconnex.com)
+(MeterConnex) utility portal. Not affiliated with or endorsed by Provident.
+
+## Supported meters
+
+Provident meters on your account:
+- Electricity
+- Cold water and hot water
+- Gas
+- Heating and cooling
+- Electric vehicle (EV) charging
+
+## Supported functionality
+
+Each meter creates a device with three sensors:
+- **Total usage**: cumulative register reading (state class `total_increasing`), compatible with the Energy dashboard.
+- **Usage today**: current day's consumption (`total_increasing`).
+- **Usage yesterday**: previous day's consumption (`total_increasing`, diagnostic).
+
+Up to 30 days of hourly consumption is imported into the recorder as external statistics (`provident:<serial>_hourly_consumption`).
+
+## Data updates
+
+Data is polled every 15 minutes. The portal updates meters on different schedules:
+- **Electricity**: published once daily after the day ends. Today's usage reads 0 until the next day.
+- **Water**: published hourly.
+- **Registers**: reflect the end of the last complete day.
+- **Hourly statistics**: each sync refetches a trailing 2-day window to pick up late or restated hours.
+
+## Installation
+
+### HACS
+
+1. Open HACS → Integrations → Custom repositories.
+2. Add `https://github.com/dangreco/ha-provident` as an **Integration**.
+3. Install **Provident** and restart Home Assistant.
+
+### Manual
+
+Copy `custom_components/provident` into your `config/custom_components/` directory and restart Home Assistant.
+
+Requires Home Assistant 2026.10 or newer.
+
+## Configuration
+
+Go to Settings → Devices & services → Add integration → **Provident**.
+
+Required parameters:
+- **Username**: portal login username or email.
+- **Password**: portal password.
+
+One config entry is created per portal account. Use **Reconfigure** to update credentials.
+
+## Removal
+
+1. Go to Settings → Devices & services → **Provident**.
+2. Open the three dots menu and select **Delete**.
+
+Deleting the entry removes all associated devices, entities, and background polling.
+
+## Known limitations
+
+- Only kWh and volume units are mapped (`kWh`, `Wh`, `MWh`, `m³`, `L`, `gal`, `ft³`, `ccf`). Unmapped units create plain sensors without statistics.
+- Electricity readings are delayed up to 24 hours by the portal.
+
+## Troubleshooting
+
+- **Sensors unavailable / cannot connect**: verify the portal is reachable in a browser. The integration retries automatically during portal downtime.
+- **Re-authentication requested**: the portal rejected the stored password. Click the notification or integration card to re-enter your password.
+- **Diagnostics**: select **Download diagnostics** on the integration page for a redacted debug export.
+
+## Examples and use cases
+
+### Energy dashboard
+
+Under Settings → Dashboards → Energy:
+- Add electricity **Total usage** sensors under **Electricity grid** → **Add consumption**.
+- Add water **Total usage** sensors under **Water consumption** → **Add water source**.
+
+### Daily notification automation
+
+```yaml
+automation:
+  - alias: "Daily Electricity Summary"
+    trigger:
+      - trigger: time
+        at: "08:00:00"
+    action:
+      - action: notify.persistent_notification
+        data:
+          title: "Electricity Yesterday"
+          message: "Usage: {{ states('sensor.3105_electricity_usage_yesterday') }} kWh"
+```
+
+## Development
+
+```sh
+nix develop
+make py-dev
+make py-lint
+make py-test
+make hassfest
+make verify-container
+```
+
+Pull requests target `dev` and require [Conventional Commits](https://www.conventionalcommits.org).
+Releasable commits open a calver release PR (`YEAR.MONTH.PATCH`). Merging it tags the release and updates `main`.
+
+## License
+
+[GPL-3.0-only](LICENSE)

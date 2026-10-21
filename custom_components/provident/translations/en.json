@@ -1,0 +1,67 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Provident",
+        "description": "Sign in to the Provident (MeterConnex) utility portal to read your electricity, water, heating, cooling, and gas meters.",
+        "data": {
+          "username": "Username",
+          "password": "Password"
+        }
+      },
+      "reconfigure": {
+        "title": "Reconfigure Provident",
+        "description": "Change the account credentials used to reach the Provident portal.",
+        "data": {
+          "username": "Username",
+          "password": "Password"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate Provident",
+        "description": "The stored password for account {username} no longer works. Enter the new password.",
+        "data": {
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to the Provident portal.",
+      "invalid_auth": "Invalid username or password.",
+      "unknown": "Unexpected error. Check the logs for details."
+    },
+    "abort": {
+      "already_configured": "This Provident account is already configured.",
+      "no_meters": "This account has no meters.",
+      "reauth_successful": "Re-authentication was successful.",
+      "reconfigure_successful": "Re-configuration was successful."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "total_usage": { "name": "Total usage" },
+      "today_usage": { "name": "Usage today" },
+      "yesterday_usage": { "name": "Usage yesterday" }
+    }
+  },
+  "exceptions": {
+    "cannot_connect": {
+      "message": "Cannot reach the Provident portal: {error}"
+    },
+    "login_rejected": {
+      "message": "Login rejected: {reason}"
+    },
+    "portal_status_error": {
+      "message": "Portal error {status}: {error}"
+    },
+    "portal_error": {
+      "message": "Portal communication failed: {error}"
+    },
+    "portal_relogin_failed": {
+      "message": "Portal still failing after relogin: {error}"
+    },
+    "portal_call_failed": {
+      "message": "{what} failed: {error}"
+    }
+  }
+}

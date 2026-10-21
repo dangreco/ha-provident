@@ -1,0 +1,168 @@
+# SPDX-License-Identifier: GPL-3.0-only
+
+# Branch rulesets only need to require the `CI` job; it fails if any needed job failed.
+
+name: CI
+
+on:
+  pull_request:
+    branches: [dev]
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+# PRs cancel superseded runs; `dev` queues so every merge gets a verdict.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      # cache-nix-action purges old Nix caches.
+      actions: write
+    outputs:
+      e2e: ${{ steps.credentials.outputs.e2e }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup
+
+      - name: Pre-commit hooks
+        run: pre-commit run --config "$PRE_COMMIT_CONFIG" --all-files --show-diff-on-failure
+        env:
+          # pinact hits the GitHub API; unauthenticated calls get intermittent 403s.
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Ruff + mypy
+        run: make py-lint
+
+      # Secrets are unavailable in job-level `if:` and on fork PRs; skip E2E instead of failing.
+      - name: Check e2e credentials
+        id: credentials
+        env:
+          HAS_CREDENTIALS: ${{ secrets.PROVIDENT_USERNAME != '' && secrets.PROVIDENT_PASSWORD != '' }}
+        run: echo "e2e=$HAS_CREDENTIALS" >>"$GITHUB_OUTPUT"
+
+  tests:
+    name: Tests
+    needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup
+
+      - name: Unit tests
+        run: make py-test
+
+      - name: E2E tests
+        if: ${{ needs.lint.outputs.e2e == 'true' }}
+        run: make py-test-e2e
+        env:
+          PROVIDENT_USERNAME: ${{ secrets.PROVIDENT_USERNAME }}
+          PROVIDENT_PASSWORD: ${{ secrets.PROVIDENT_PASSWORD }}
+
+  container:
+    name: Container
+    needs: tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup
+
+      - name: Verify in a real Home Assistant container
+        run: make verify-container
+
+  hassfest:
+    name: hassfest
+    needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # home-assistant/actions has no recent release tag to pin; run the same image directly.
+      - name: hassfest
+        run: make hassfest CONTAINER_RUNTIME=docker
+
+  hacs:
+    name: HACS
+    needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: hacs/action@d556e736723344f83838d08488c983a15381059a # 22.5.0
+        with:
+          category: integration
+
+  # Release PRs only: fails when the version is stale.
+  release-pr:
+    name: Release PR
+    needs: lint
+    if: ${{ github.event_name == 'pull_request' && startsWith(github.head_ref, 'release/') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Version is current
+        env:
+          BRANCH: ${{ github.head_ref }}
+        run: python3 scripts/release.py check "$BRANCH"
+
+  # Single required check; always runs so it always reports.
+  ci:
+    name: CI
+    needs: [lint, tests, container, hassfest, hacs, release-pr]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Summary
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          {
+            echo "## CI"
+            echo
+            echo "| Job | Result |"
+            echo "| --- | --- |"
+            jq -r 'to_entries[] | "| \(.key) | \(.value.result) |"' <<<"$NEEDS"
+          } >>"$GITHUB_STEP_SUMMARY"
+          failed=$(jq -r '[to_entries[] | select(.value.result == "failure" or .value.result == "cancelled") | .key] | join(", ")' <<<"$NEEDS")
+          if [[ -n $failed ]]; then
+            echo "::error::Failed or cancelled: $failed"
+            exit 1
+          fi

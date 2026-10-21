@@ -1,0 +1,3 @@
+# Commit message validation only; releases are handled by scripts/release.py.
+[tool.commitizen]
+name = "cz_conventional_commits"
