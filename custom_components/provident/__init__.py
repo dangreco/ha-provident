@@ -6,8 +6,9 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers.start import async_at_started
 
 from .const import DOMAIN
 from .coordinator import ProvidentCoordinator, new_client
@@ -33,17 +34,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ProvidentConfigEntry) ->
 
     entry.async_on_unload(coordinator.async_add_listener(_make_stats_listener(hass, entry)))
 
-    sync_task = hass.async_create_background_task(
-        async_sync_statistics(hass, coordinator),
-        f"{entry.domain} statistics sync for {entry.title}",
-        eager_start=True,
-    )
+    @callback
+    def _start_sync(_hass: HomeAssistant) -> None:
+        entry.async_create_background_task(
+            hass,
+            async_sync_statistics(hass, coordinator),
+            f"{entry.domain} statistics sync for {entry.title}",
+            eager_start=True,
+        )
 
-    def _cancel_sync() -> None:
-        if not sync_task.done():
-            sync_task.cancel()
-
-    entry.async_on_unload(_cancel_sync)
+    entry.async_on_unload(async_at_started(hass, _start_sync))
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
@@ -54,7 +54,8 @@ def _make_stats_listener(hass: HomeAssistant, entry: ProvidentConfigEntry) -> Ca
         coordinator = entry.runtime_data
         if not coordinator.last_update_success:
             return
-        hass.async_create_background_task(
+        entry.async_create_background_task(
+            hass,
             async_sync_statistics(hass, coordinator),
             f"{entry.domain} statistics sync for {entry.title}",
             eager_start=True,

@@ -28,7 +28,7 @@ async def test_entities_created(recorder_mock, hass: HomeAssistant, setup_entry)
         assert state is not None, entity_id
         assert state.attributes["device_class"] == device_class
         assert state.attributes["unit_of_measurement"] == unit
-        assert state.attributes["state_class"] == "total_increasing"
+        assert "state_class" not in state.attributes
 
     electricity = hass.states.get("sensor.3105_electricity_total_usage")
     assert electricity is not None
@@ -243,22 +243,3 @@ async def test_snapshot_platform(
     assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
     await hass.async_block_till_done(wait_background_tasks=True)
     await snapshot_platform(hass, entity_registry, snapshot, mock_config_entry.entry_id)
-
-
-async def test_energy_dashboard_requirements(
-    recorder_mock, hass: HomeAssistant, setup_entry
-) -> None:
-    from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
-
-    for entity_id in (
-        "sensor.3105_electricity_total_usage",
-        "sensor.3105_cold_water_total_usage",
-    ):
-        state = hass.states.get(entity_id)
-        assert state is not None
-        assert state.attributes["device_class"] in (
-            SensorDeviceClass.ENERGY.value,
-            SensorDeviceClass.WATER.value,
-        )
-        assert state.attributes["state_class"] == SensorStateClass.TOTAL_INCREASING.value
-        assert "last_reset" not in state.attributes

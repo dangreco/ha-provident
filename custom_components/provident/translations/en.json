@@ -6,7 +6,11 @@
         "description": "Sign in to the Provident (MeterConnex) utility portal to read your electricity, water, heating, cooling, and gas meters.",
         "data": {
           "username": "Username",
-          "password": "Password"
+          "password": "Password",
+          "backfill_days": "History to import"
+        },
+        "data_description": {
+          "backfill_days": "Days of hourly usage to import into the Energy dashboard when the account is first connected."
         }
       },
       "reconfigure": {
