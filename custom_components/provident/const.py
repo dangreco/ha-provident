@@ -62,6 +62,8 @@ REFETCH_DAYS = 2
 # Options.
 CONF_RATE_PLAN = "rate_plan"
 CONF_INCLUDE_FEES = "include_fees"
+#: Market plan: ``[{"start": ISO date, "cents": ¢/kWh}, …]`` entered from bills.
+CONF_BILLED_RATES = "billed_rates"
 DEFAULT_INCLUDE_FEES = True
 
 # Provident publishes rates in Canadian dollars; prices change a couple of times a year.

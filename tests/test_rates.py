@@ -11,9 +11,11 @@ from provident import PublishedRates, RateEntry
 
 from custom_components.provident.rates import (
     FEE_HOURS,
+    BilledRate,
     Period,
     Plan,
     Price,
+    RateHistory,
     RateSchedule,
     Tariff,
     holidays,
@@ -270,3 +272,61 @@ def test_schedule_change_reports_the_first_day_priced_differently() -> None:
     assert fee.changed_from(old) == date(2026, 4, 16)
     # A price that vanished from the page keeps what was imported.
     assert RateSchedule.from_published(_published(tou_on_peak=None)).changed_from(old) is None
+
+
+def _history(*rates: tuple[str, float]) -> RateHistory:
+    return RateHistory(tuple(BilledRate(date.fromisoformat(d), c) for d, c in rates))
+
+
+def test_billed_rates_apply_until_the_next_one() -> None:
+    billed = _history(("2026-09-15", 9.9), ("2026-08-15", 9.5))  # any order
+    assert [r.start for r in billed.rates] == [date(2026, 8, 15), date(2026, 9, 15)]
+    assert billed.on(date(2026, 8, 14)) is None
+    assert billed.on(date(2026, 8, 15)) == 9.5
+    assert billed.on(date(2026, 9, 14)) == 9.5
+    assert billed.on(date(2026, 9, 15)) == 9.9
+    assert billed.on(date(2030, 1, 1)) == 9.9
+    assert RateHistory.from_list(billed.to_list()) == billed
+    with pytest.raises(ValueError, match="same day"):
+        _history(("2026-08-15", 9.5), ("2026-08-15", 9.6))
+
+
+def test_billed_rate_changes_report_the_first_affected_day() -> None:
+    aug = _history(("2026-08-15", 9.5))
+    assert aug.changed_from(aug) is None
+    assert aug.changed_from(None) == date(2026, 8, 15)
+    # A new bill only affects days from its own start.
+    with_sep = _history(("2026-08-15", 9.5), ("2026-09-15", 9.9))
+    assert with_sep.changed_from(aug) == date(2026, 9, 15)
+    # Correcting August's rate affects August onward.
+    fixed = _history(("2026-08-15", 9.6), ("2026-09-15", 9.9))
+    assert fixed.changed_from(with_sep) == date(2026, 8, 15)
+    # Removing September falls back to August's rate from September on.
+    assert aug.changed_from(with_sep) == date(2026, 9, 15)
+
+
+def test_market_tariff_prices_every_hour_at_the_billed_rate() -> None:
+    billed = _history(("2026-08-15", 9.5), ("2026-09-15", 9.9))
+    tariff = tariff_for(None, Plan.MARKET, ev=False, include_fees=False, billed=billed)
+    assert tariff is not None
+    # Same rate any hour, weekday or holiday: no time-of-use periods.
+    for day, hour in ((date(2026, 9, 7), 3), (date(2026, 9, 9), 12), (date(2026, 9, 9), 18)):
+        assert tariff.period(day, hour, None) is Period.MARKET
+        assert tariff.price(day, hour, None) == pytest.approx(0.095)
+    assert tariff.price(date(2026, 9, 15), 0, None) == pytest.approx(0.099)
+    costs = tariff.costs([(date(2026, 8, 14), 12, 1.0), (date(2026, 8, 15), 12, 2.0)], None)
+    assert costs[0] is None  # before the first billed rate
+    assert costs[1] == pytest.approx(0.19)
+
+
+def test_market_tariff_needs_rates_and_never_prices_ev() -> None:
+    billed = _history(("2026-08-15", 9.5))
+    assert tariff_for(None, Plan.MARKET, ev=False, include_fees=False, billed=None) is None
+    empty = RateHistory(())
+    assert tariff_for(None, Plan.MARKET, ev=False, include_fees=False, billed=empty) is None
+    assert tariff_for(None, Plan.MARKET, ev=True, include_fees=False, billed=billed) is None
+    # Fees still come from the rates page, so they need it.
+    assert tariff_for(None, Plan.MARKET, ev=False, include_fees=True, billed=billed) is None
+    schedule = RateSchedule.from_published(_published())
+    with_fees = tariff_for(schedule, Plan.MARKET, ev=False, include_fees=True, billed=billed)
+    assert with_fees is not None and len(with_fees.fees) == 2
