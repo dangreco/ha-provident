@@ -48,7 +48,7 @@ def metadata(meter: Meter, unit: str, unit_class: str) -> StatisticMetaData:
     return StatisticMetaData(
         mean_type=StatisticMeanType.NONE,
         has_sum=True,
-        name=f"{meter.name} {label} hourly consumption",
+        name=f"{meter.name} {label} hourly usage",
         source="provident",
         statistic_id=statistic_id(meter),
         unit_class=unit_class,
