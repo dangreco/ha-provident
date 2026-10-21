@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import date
 from typing import Any, override
 
 import probatio
@@ -16,9 +17,11 @@ from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import callback
 from homeassistant.helpers.selector import (
     BooleanSelector,
+    DateSelector,
     NumberSelector,
     NumberSelectorConfig,
     NumberSelectorMode,
+    SelectOptionDict,
     SelectSelector,
     SelectSelectorConfig,
     SelectSelectorMode,
@@ -33,6 +36,7 @@ from provident import (
 
 from .const import (
     CONF_BACKFILL_DAYS,
+    CONF_BILLED_RATES,
     CONF_INCLUDE_FEES,
     CONF_RATE_PLAN,
     DEFAULT_BACKFILL_DAYS,
@@ -40,7 +44,7 @@ from .const import (
     DOMAIN,
     MAX_BACKFILL_DAYS,
 )
-from .rates import Plan
+from .rates import BilledRate, Plan, RateHistory
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -182,17 +186,28 @@ def _schema(*, include_username: bool, include_backfill: bool) -> probatio.Schem
 
 
 class ProvidentOptionsFlow(OptionsFlowWithReload):
-    """Price plan for the cost statistic and price sensors; saving reloads the entry."""
+    """Price plan for the cost statistic and price sensors; saving reloads the entry.
+
+    The market plan adds a step for the rates printed on each bill, which Provident does not
+    publish: add one per bill (the rate and the first day it covers) or remove a mistake.
+    """
+
+    def __init__(self) -> None:
+        self._options: dict[str, Any] = {}
+        self._billed: RateHistory = RateHistory(())
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        if user_input is not None:
-            return self.async_create_entry(
-                data={
-                    CONF_RATE_PLAN: str(Plan(user_input[CONF_RATE_PLAN])),
-                    CONF_INCLUDE_FEES: bool(user_input[CONF_INCLUDE_FEES]),
-                }
-            )
         options = self.config_entry.options
+        if user_input is not None:
+            plan = Plan(user_input[CONF_RATE_PLAN])
+            self._options = {
+                CONF_RATE_PLAN: str(plan),
+                CONF_INCLUDE_FEES: bool(user_input[CONF_INCLUDE_FEES]),
+            }
+            self._billed = RateHistory.from_list(options.get(CONF_BILLED_RATES, []))
+            if plan is Plan.MARKET:
+                return await self.async_step_billed_rates()
+            return self._finish()
         schema = probatio.Schema(
             {
                 probatio.Required(
@@ -211,3 +226,75 @@ class ProvidentOptionsFlow(OptionsFlowWithReload):
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)
+
+    async def async_step_billed_rates(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            rates = list(self._billed.rates)
+            remove = user_input.get(_REMOVE)
+            start_text = user_input.get(_START)
+            cents = user_input.get(_CENTS)
+            if remove:
+                rates = [r for r in rates if r.start.isoformat() != remove]
+            if (start_text is None) != (cents is None):
+                errors["base"] = "billed_rate_incomplete"
+            elif start_text is not None and cents is not None:
+                start = date.fromisoformat(start_text)
+                # Re-entering a bill's start date corrects its rate.
+                rates = [r for r in rates if r.start != start]
+                rates.append(BilledRate(start=start, cents=float(cents)))
+            if not errors:
+                self._billed = RateHistory(tuple(rates))
+                if user_input.get(_ADD_ANOTHER):
+                    return await self.async_step_billed_rates()
+                if not self._billed.rates:
+                    errors["base"] = "billed_rates_required"
+                else:
+                    return self._finish()
+        fields: dict[Any, Any] = {
+            probatio.Optional(_START): DateSelector(),
+            probatio.Optional(_CENTS): NumberSelector(
+                NumberSelectorConfig(
+                    min=0.1,
+                    max=100,
+                    step="any",
+                    mode=NumberSelectorMode.BOX,
+                    unit_of_measurement="¢/kWh",
+                )
+            ),
+        }
+        if self._billed.rates:
+            fields[probatio.Optional(_REMOVE)] = SelectSelector(
+                SelectSelectorConfig(
+                    options=[
+                        SelectOptionDict(value=r.start.isoformat(), label=_describe(r))
+                        for r in self._billed.rates
+                    ],
+                    mode=SelectSelectorMode.DROPDOWN,
+                )
+            )
+        fields[probatio.Optional(_ADD_ANOTHER, default=False)] = BooleanSelector()
+        listed = "\n".join(f"- {_describe(r)}" for r in self._billed.rates) or "- (none yet)"
+        return self.async_show_form(
+            step_id="billed_rates",
+            data_schema=probatio.Schema(fields),
+            errors=errors,
+            description_placeholders={"rates": listed},
+        )
+
+    def _finish(self) -> ConfigFlowResult:
+        return self.async_create_entry(
+            data={**self._options, CONF_BILLED_RATES: self._billed.to_list()}
+        )
+
+
+_START = "start"
+_CENTS = "cents"
+_REMOVE = "remove"
+_ADD_ANOTHER = "add_another"
+
+
+def _describe(rate: BilledRate) -> str:
+    return f"from {rate.start.isoformat()}: {rate.cents:g} ¢/kWh"

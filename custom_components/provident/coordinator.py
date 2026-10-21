@@ -31,6 +31,7 @@ from provident import (
 
 from .const import (
     CONF_BACKFILL_DAYS,
+    CONF_BILLED_RATES,
     CONF_INCLUDE_FEES,
     CONF_RATE_PLAN,
     DEFAULT_BACKFILL_DAYS,
@@ -41,7 +42,7 @@ from .const import (
     meter_unit_info,
 )
 from .models import DailyUsage, MeterData, ProvidentData
-from .rates import KWH_PER_UNIT, Plan, RateSchedule, Tariff, tariff_for
+from .rates import KWH_PER_UNIT, Plan, RateHistory, RateSchedule, Tariff, tariff_for
 
 if TYPE_CHECKING:
     from . import ProvidentConfigEntry
@@ -88,6 +89,8 @@ class ProvidentCoordinator(DataUpdateCoordinator[ProvidentData]):
         self.backfill_days: int = int(entry.data.get(CONF_BACKFILL_DAYS, DEFAULT_BACKFILL_DAYS))
         self.plan = Plan(entry.options.get(CONF_RATE_PLAN, Plan.NONE))
         self.include_fees: bool = bool(entry.options.get(CONF_INCLUDE_FEES, DEFAULT_INCLUDE_FEES))
+        #: Market plan: the rates entered from bills.
+        self.billed = RateHistory.from_list(entry.options.get(CONF_BILLED_RATES, []))
         self.statistics_lock = asyncio.Lock()
         self._store: Store[dict[str, Any]] = Store(hass, _STORE_VERSION, store_key(entry.entry_id))
         self.rates: RateSchedule | None = None
@@ -130,7 +133,13 @@ class ProvidentCoordinator(DataUpdateCoordinator[ProvidentData]):
             ev = True
         else:
             return None
-        return tariff_for(self.rates, self.plan, ev=ev, include_fees=self.include_fees)
+        return tariff_for(
+            self.rates,
+            self.plan,
+            ev=ev,
+            include_fees=self.include_fees,
+            billed=self.billed,
+        )
 
     async def async_fetch_rates(self) -> RateSchedule | None:
         """Fetch the published rates now; ``None`` (and the old rates kept) on failure."""
@@ -164,8 +173,8 @@ class ProvidentCoordinator(DataUpdateCoordinator[ProvidentData]):
         return schedule
 
     async def _maybe_refresh_rates(self) -> None:
-        """Refresh rates at most daily, and only when a plan uses them."""
-        if self.plan is Plan.NONE:
+        """Refresh rates at most daily, and only when the plan or fees use them."""
+        if self.plan is Plan.NONE or (self.plan is Plan.MARKET and not self.include_fees):
             return
         now = dt_util.utcnow()
         if self._rates_retry_at is not None and now < self._rates_retry_at:
