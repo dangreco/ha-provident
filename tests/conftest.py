@@ -14,6 +14,8 @@ from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 from provident import AsyncClient
 from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.syrupy import HomeAssistantSnapshotExtension
+from syrupy.assertion import SnapshotAssertion
 
 from custom_components.provident.const import DOMAIN
 
@@ -24,6 +26,12 @@ from .fixtures.portal import make_portal
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 pytest_plugins = ("pytest_homeassistant_custom_component",)
+
+
+@pytest.fixture
+def snapshot(snapshot: SnapshotAssertion) -> SnapshotAssertion:
+    """Use Home Assistant's stable snapshot serializer/dirname."""
+    return snapshot.use_extension(HomeAssistantSnapshotExtension)
 
 
 def _warm_provident_date_types() -> None:
