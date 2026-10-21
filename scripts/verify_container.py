@@ -275,7 +275,8 @@ def main() -> int:
         electricity = by_id.get("sensor.3105_electricity_total_usage")
         assert electricity is not None, f"sensors missing: {list(by_id)[:5]}"
         assert electricity["attributes"]["device_class"] == "energy"
-        assert electricity["attributes"]["state_class"] == "total_increasing"
+        # Register sensors stay out of LTS; Energy uses the hourly external statistics.
+        assert "state_class" not in electricity["attributes"]
         assert electricity["state"] not in ("unknown", "unavailable")
         water = by_id["sensor.3105_cold_water_total_usage"]
         assert water["attributes"]["device_class"] == "water"
@@ -302,15 +303,16 @@ def main() -> int:
                 )
             )
             stats = results[0].get("provident:85006408_9_hourly_consumption", [])
-            if len(stats) > 24:
+            if len(stats) >= 29 * 24:
                 break
             time.sleep(3)
-        assert len(stats) > 24, f"only {len(stats)} statistics imported"
+        # Default backfill is 30 days; the form was submitted without backfill_days.
+        assert len(stats) >= 29 * 24, f"only {len(stats)} statistics imported"
         sums = [row["sum"] for row in stats]
         assert all(b >= a for a, b in itertools.pairwise(sums)), "sums not monotonic"
         log(f"statistics: {len(stats)} hourly rows, monotonic sums")
 
-        log("register statistic validates as an energy grid source")
+        log("hourly statistics validate as energy sources")
         results = asyncio.run(
             ws_rpc(
                 ws_url,
