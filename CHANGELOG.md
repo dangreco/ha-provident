@@ -1,5 +1,11 @@
 # Changelog
 
+## [2026.10.5](https://github.com/dangreco/ha-provident/compare/2026.10.4...2026.10.5)
+
+### Features
+
+- market price plan ([#11](https://github.com/dangreco/ha-provident/pull/11)) ([4c8214a](https://github.com/dangreco/ha-provident/commit/4c8214a0a7f0e5bebc34a6254054a9d55958e8d0))
+
 ## [2026.10.4](https://github.com/dangreco/ha-provident/compare/2026.10.3...2026.10.4)
 
 ### Features
