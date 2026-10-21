@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import date, timedelta
@@ -24,7 +25,7 @@ from provident import (
     TransportError,
 )
 
-from .const import DOMAIN, UPDATE_INTERVAL
+from .const import CONF_BACKFILL_DAYS, DEFAULT_BACKFILL_DAYS, DOMAIN, UPDATE_INTERVAL
 from .models import DailyUsage, MeterData, ProvidentData
 
 if TYPE_CHECKING:
@@ -59,6 +60,8 @@ class ProvidentCoordinator(DataUpdateCoordinator[ProvidentData]):
         self._client = client
         self._username = entry.data[CONF_USERNAME]
         self._password = entry.data[CONF_PASSWORD]
+        self.backfill_days: int = int(entry.data.get(CONF_BACKFILL_DAYS, DEFAULT_BACKFILL_DAYS))
+        self.statistics_lock = asyncio.Lock()
 
     @property
     def client(self) -> AsyncClient:

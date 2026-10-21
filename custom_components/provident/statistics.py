@@ -26,7 +26,6 @@ from homeassistant.util import slugify
 from provident import Meter, Series
 
 from .const import (
-    BACKFILL_DAYS,
     HOUR_CHUNK_DAYS,
     REFETCH_DAYS,
     UTILITY_LABEL,
@@ -71,22 +70,28 @@ async def async_sync_statistics(hass: HomeAssistant, coordinator: ProvidentCoord
         return
 
     data = coordinator.data
-    for meter_data in data.meters:
-        meter = meter_data.meter
-        _device_class, unit, unit_class = meter_unit_info(meter)
-        if not unit_class:
-            # The recorder cannot convert unmapped units.
-            _LOGGER.warning(
-                "Skipping statistics for meter %s: unmapped unit %r",
-                meter.serial,
-                meter.unit,
-            )
-            continue
-        try:
-            await _sync_meter(hass, coordinator, meter, unit, unit_class, data.today)
-        except Exception as err:
-            # Background loop: log and retry next refresh (HA stopping mid-sync can raise).
-            _LOGGER.warning("Statistics sync failed for meter %s: %s", meter.serial, err)
+    if coordinator.statistics_lock.locked():
+        _LOGGER.debug("Statistics sync already running; skipping")
+        return
+    async with coordinator.statistics_lock:
+        for meter_data in data.meters:
+            meter = meter_data.meter
+            _device_class, unit, unit_class = meter_unit_info(meter)
+            if not unit_class:
+                # The recorder cannot convert unmapped units.
+                _LOGGER.warning(
+                    "Skipping statistics for meter %s: unmapped unit %r",
+                    meter.serial,
+                    meter.unit,
+                )
+                continue
+            try:
+                await _sync_meter(hass, coordinator, meter, unit, unit_class, data.today)
+            except Exception as err:
+                # Background loop: log and retry next refresh (HA stopping mid-sync can raise).
+                _LOGGER.warning("Statistics sync failed for meter %s: %s", meter.serial, err)
+        # Commit rows so the next sync's get_last_statistics sees them.
+        await get_instance(hass).async_block_till_done()
 
 
 async def _sync_meter(
@@ -103,31 +108,38 @@ async def _sync_meter(
     meta = metadata(meter, unit, unit_class)
     now = dt_util.utcnow()
 
-    existing = await get_instance(hass).async_add_executor_job(
-        get_last_statistics, hass, 1, stat_id, True, {"sum"}
-    )
-    window_first_day = (
-        today - timedelta(days=REFETCH_DAYS)
-        if existing.get(stat_id)
-        else today - timedelta(days=BACKFILL_DAYS)
-    )
-    window_first_start = bucket_start(window_first_day, 0, tz)
-
-    history = await get_instance(hass).async_add_executor_job(
-        statistics_during_period,
-        hass,
-        window_first_start - timedelta(hours=1),
-        None,
-        {stat_id},
-        "hour",
-        None,
-        {"sum"},
-    )
-    rows = history.get(stat_id, [])
-    if rows and float(rows[0]["start"]) < window_first_start.timestamp():
-        running_sum = float(rows[0]["sum"] or 0.0)
-    else:
+    earliest = today - timedelta(days=coordinator.backfill_days)
+    last = (
+        await get_instance(hass).async_add_executor_job(
+            get_last_statistics, hass, 1, stat_id, True, {"sum"}
+        )
+    ).get(stat_id)
+    if not last:
+        window_first_day = earliest
+        window_first_start = bucket_start(window_first_day, 0, tz)
         running_sum = 0.0
+    else:
+        last_start = dt_util.utc_from_timestamp(float(last[0]["start"]))
+        last_day = last_start.astimezone(tz).date()
+        window_first_day = max(earliest, min(today - timedelta(days=REFETCH_DAYS), last_day))
+        window_first_start = bucket_start(window_first_day, 0, tz)
+        if last_start < window_first_start:
+            # Newest row predates the window (capped by earliest): its sum is the baseline.
+            running_sum = float(last[0]["sum"] or 0.0)
+        else:
+            prev = (
+                await get_instance(hass).async_add_executor_job(
+                    statistics_during_period,
+                    hass,
+                    window_first_start - timedelta(hours=1),
+                    window_first_start,
+                    {stat_id},
+                    "hour",
+                    None,
+                    {"sum"},
+                )
+            ).get(stat_id, [])
+            running_sum = float(prev[0]["sum"] or 0.0) if prev else 0.0
 
     # Spring-forward: two buckets share a UTC hour and the recorder keeps one row per start, so merge.
     by_start: dict[datetime, float] = {}
@@ -138,12 +150,27 @@ async def _sync_meter(
             _fetch_chunk(coordinator, meter, day, chunk_end),
             f"hourly series for meter {meter.serial}",
         )
-        for i, value in enumerate(series[0].data if series else []):
-            local_day = day + timedelta(days=i // 24)
-            start = bucket_start(local_day, i % 24, tz)
-            if start >= now:
-                continue
-            by_start[start] = by_start.get(start, 0.0) + value
+        chunk = list(series[0].data) if series else []
+        # The portal returns 24 buckets per local day, DST days included.
+        expected = (chunk_end - day).days * 24
+        if not chunk:
+            _LOGGER.debug("No hourly data for meter %s from %s to %s", meter.serial, day, chunk_end)
+        elif len(chunk) != expected:
+            _LOGGER.warning(
+                "Unexpected hourly series length for meter %s (%s..%s): got %d, expected %d",
+                meter.serial,
+                day,
+                chunk_end,
+                len(chunk),
+                expected,
+            )
+        else:
+            for i, value in enumerate(chunk):
+                local_day = day + timedelta(days=i // 24)
+                start = bucket_start(local_day, i % 24, tz)
+                if start >= now:
+                    continue
+                by_start[start] = by_start.get(start, 0.0) + value
         day = chunk_end
 
     stats: list[StatisticData] = []

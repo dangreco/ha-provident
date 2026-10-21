@@ -15,7 +15,11 @@ from pytest_homeassistant_custom_component.components.recorder.common import (
     async_wait_recording_done,
 )
 
-from custom_components.provident.const import BACKFILL_DAYS, REFETCH_DAYS
+from custom_components.provident.const import (
+    CONF_BACKFILL_DAYS,
+    DEFAULT_BACKFILL_DAYS,
+    REFETCH_DAYS,
+)
 from custom_components.provident.statistics import bucket_start
 
 ELECTRICITY_ID = "provident:85006408_9_hourly_consumption"
@@ -72,7 +76,7 @@ async def test_first_import_backfills(
     await _sync(hass, mock_config_entry)
 
     coordinator = mock_config_entry.runtime_data
-    window_day = coordinator.data.today - timedelta(days=BACKFILL_DAYS)
+    window_day = coordinator.data.today - timedelta(days=DEFAULT_BACKFILL_DAYS)
     first = bucket_start(window_day, 0, dt_util.UTC)
     expected = {stat_id: int((frozen_now - first).total_seconds() // 3600) for stat_id in ALL_IDS}
 
@@ -110,7 +114,7 @@ async def test_states_match_portal(
     rows = await _stats(hass, ELECTRICITY_ID)
     by_start = {row["start"]: row["state"] for row in rows}
 
-    day = today - timedelta(days=BACKFILL_DAYS)
+    day = today - timedelta(days=DEFAULT_BACKFILL_DAYS)
     checked = 0
     while day <= today:
         for hour in range(24):
@@ -355,3 +359,65 @@ async def test_unmapped_unit_skipped(
     await async_wait_recording_done(hass)
 
     assert await _stats(hass, "provident:88800001_1_hourly_consumption") == []
+
+
+async def test_configured_backfill_days(
+    recorder_mock: Recorder,
+    freezer,
+    hass: HomeAssistant,
+    portal,
+    patch_client: None,
+    mock_config_entry,
+) -> None:
+    frozen_now = datetime(2026, 10, 20, 12, 0, tzinfo=dt_util.UTC)
+    freezer.move_to(frozen_now)
+    mock_config_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        mock_config_entry, data={**mock_config_entry.data, CONF_BACKFILL_DAYS: 7}
+    )
+    assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    await async_wait_recording_done(hass)
+
+    first = bucket_start(
+        mock_config_entry.runtime_data.data.today - timedelta(days=7), 0, dt_util.UTC
+    )
+    for stat_id in ALL_IDS:
+        rows = await _stats(hass, stat_id)
+        assert rows[0]["start"] == first.timestamp(), stat_id
+        assert len(rows) == int((frozen_now - first).total_seconds() // 3600), stat_id
+
+
+async def test_downtime_longer_than_refetch_window_has_no_gap(
+    recorder_mock: Recorder,
+    freezer,
+    hass: HomeAssistant,
+    portal,
+    patch_client: None,
+    mock_config_entry,
+) -> None:
+    freezer.move_to(datetime(2026, 10, 20, 10, 30, tzinfo=dt_util.UTC))
+    mock_config_entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    await async_wait_recording_done(hass)
+
+    before = await _stats(hass, COLD_WATER_ID)
+    last_sum = before[-1]["sum"]
+    last_start = before[-1]["start"]
+
+    freezer.tick(timedelta(days=REFETCH_DAYS + 3))
+    await _sync(hass, mock_config_entry)
+
+    after = await _stats(hass, COLD_WATER_ID)
+    starts = [r["start"] for r in after]
+    assert all(b - a == 3600 for a, b in zip(starts, starts[1:], strict=False))
+    sums = [r["sum"] for r in after]
+    assert all(b >= a for a, b in zip(sums, sums[1:], strict=False))
+    # Every step adds exactly its own state: a baseline reset would break this at the window start.
+    assert all(
+        cur["sum"] - prev["sum"] == pytest.approx(cur["state"], abs=1e-3)
+        for prev, cur in zip(after, after[1:], strict=False)
+    )
+    assert after[-1]["sum"] > last_sum
+    assert after[-1]["start"] > last_start + 4 * 24 * 3600

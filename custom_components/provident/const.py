@@ -52,7 +52,9 @@ UPDATE_INTERVAL = timedelta(minutes=15)
 # The portal serves hourly series for at most 7 days per request.
 HOUR_CHUNK_DAYS = 7
 
-BACKFILL_DAYS = 30
+CONF_BACKFILL_DAYS = "backfill_days"
+DEFAULT_BACKFILL_DAYS = 30
+MAX_BACKFILL_DAYS = 365
 
 # Trailing window refetched each sync for late or restated hours.
 REFETCH_DAYS = 2

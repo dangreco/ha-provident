@@ -10,7 +10,7 @@ from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 
-from custom_components.provident.const import DOMAIN
+from custom_components.provident.const import CONF_BACKFILL_DAYS, DEFAULT_BACKFILL_DAYS, DOMAIN
 
 from .fixtures.portal import LOGIN, PASSWORD, TREE, USERNAME
 
@@ -37,11 +37,27 @@ async def test_user_flow_creates_entry(
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["title"] == f"Provident ({USERNAME})"
-    assert result["data"] == CREDENTIALS
+    assert result["data"] == {**CREDENTIALS, CONF_BACKFILL_DAYS: 30}
     assert len(hass.config_entries.async_entries(DOMAIN)) == 1
     # One login for validation, one for entry setup.
     assert len(_login_requests(portal)) == 2
     assert any(r[1] == TREE for r in portal.requests)
+
+
+async def test_user_flow_custom_backfill_days(
+    recorder_mock, hass: HomeAssistant, portal, patch_client: None
+) -> None:
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={**CREDENTIALS, CONF_BACKFILL_DAYS: 7}
+    )
+    await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_BACKFILL_DAYS] == 7
+    assert isinstance(result["data"][CONF_BACKFILL_DAYS], int)
 
 
 async def test_user_flow_invalid_auth(
@@ -158,7 +174,7 @@ async def test_reconfigure_flow(
     assert result["reason"] == "reconfigure_successful"
     entry = hass.config_entries.async_get_entry(mock_config_entry.entry_id)
     assert entry is not None
-    assert entry.data == CREDENTIALS
+    assert entry.data == {**CREDENTIALS, CONF_BACKFILL_DAYS: DEFAULT_BACKFILL_DAYS}
     assert entry.state is ConfigEntryState.LOADED
 
 

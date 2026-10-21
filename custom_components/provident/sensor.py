@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, override
 
-from homeassistant.components.sensor import SensorEntity, SensorStateClass
+from homeassistant.components.sensor import SensorEntity
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
@@ -120,7 +120,6 @@ class ProvidentSensorEntity(CoordinatorEntity[ProvidentCoordinator], SensorEntit
 class ProvidentTotalUsageSensor(ProvidentSensorEntity, RestoreEntity):
     """Meter register; the portal value lags by up to a day."""
 
-    _attr_state_class = SensorStateClass.TOTAL_INCREASING
     _attr_translation_key = "total_usage"
     _attr_suggested_display_precision = 3
 
@@ -154,7 +153,6 @@ class ProvidentTotalUsageSensor(ProvidentSensorEntity, RestoreEntity):
 class ProvidentTodaySensor(ProvidentSensorEntity):
     """Today's sum; the portal zero-fills unpublished hours, so it only grows."""
 
-    _attr_state_class = SensorStateClass.TOTAL_INCREASING
     _attr_translation_key = "today_usage"
     _attr_suggested_display_precision = 3
 
@@ -169,7 +167,6 @@ class ProvidentTodaySensor(ProvidentSensorEntity):
 
 
 class ProvidentYesterdaySensor(ProvidentSensorEntity):
-    _attr_state_class = SensorStateClass.TOTAL_INCREASING
     _attr_translation_key = "yesterday_usage"
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_suggested_display_precision = 3

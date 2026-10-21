@@ -15,7 +15,7 @@ from homeassistant.core import HomeAssistant
 from provident import AsyncClient
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.provident.const import DOMAIN
+from custom_components.provident.const import CONF_BACKFILL_DAYS, DEFAULT_BACKFILL_DAYS, DOMAIN
 
 from .fixtures.portal import PASSWORD as PORTAL_PASSWORD
 from .fixtures.portal import USERNAME as PORTAL_USERNAME
@@ -105,7 +105,11 @@ def mock_config_entry() -> MockConfigEntry:
     return MockConfigEntry(
         domain=DOMAIN,
         title=f"Provident ({PORTAL_USERNAME})",
-        data={CONF_USERNAME: PORTAL_USERNAME, CONF_PASSWORD: PORTAL_PASSWORD},
+        data={
+            CONF_USERNAME: PORTAL_USERNAME,
+            CONF_PASSWORD: PORTAL_PASSWORD,
+            CONF_BACKFILL_DAYS: DEFAULT_BACKFILL_DAYS,
+        },
         unique_id=PORTAL_USERNAME,
     )
 

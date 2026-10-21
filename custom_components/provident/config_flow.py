@@ -8,6 +8,11 @@ from typing import Any, override
 import probatio
 from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
+from homeassistant.helpers.selector import (
+    NumberSelector,
+    NumberSelectorConfig,
+    NumberSelectorMode,
+)
 from provident import (
     DecodeError,
     HTTPStatusError,
@@ -16,7 +21,7 @@ from provident import (
     TransportError,
 )
 
-from .const import DOMAIN
+from .const import CONF_BACKFILL_DAYS, DEFAULT_BACKFILL_DAYS, DOMAIN, MAX_BACKFILL_DAYS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -66,12 +71,16 @@ class ProvidentConfigFlow(ConfigFlow, domain=DOMAIN):
                 self._abort_if_unique_id_configured()
                 return self.async_create_entry(
                     title=f"Provident ({username})",
-                    data=user_input,
+                    data={
+                        CONF_USERNAME: username,
+                        CONF_PASSWORD: password,
+                        CONF_BACKFILL_DAYS: int(user_input[CONF_BACKFILL_DAYS]),
+                    },
                 )
 
         return self.async_show_form(
             step_id="user",
-            data_schema=_schema(include_username=True),
+            data_schema=_schema(include_username=True, include_backfill=True),
             errors=errors,
         )
 
@@ -89,12 +98,12 @@ class ProvidentConfigFlow(ConfigFlow, domain=DOMAIN):
                     return self.async_abort(reason="no_meters")
                 return self.async_update_reload_and_abort(
                     entry,
-                    data={CONF_USERNAME: username, CONF_PASSWORD: password},
+                    data_updates={CONF_USERNAME: username, CONF_PASSWORD: password},
                 )
 
         return self.async_show_form(
             step_id="reconfigure",
-            data_schema=_schema(include_username=True),
+            data_schema=_schema(include_username=True, include_backfill=False),
             errors=errors,
         )
 
@@ -120,7 +129,7 @@ class ProvidentConfigFlow(ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="reauth_confirm",
-            data_schema=_schema(include_username=False),
+            data_schema=_schema(include_username=False, include_backfill=False),
             description_placeholders={
                 "username": reauth_entry.data[CONF_USERNAME],
             },
@@ -128,9 +137,21 @@ class ProvidentConfigFlow(ConfigFlow, domain=DOMAIN):
         )
 
 
-def _schema(*, include_username: bool) -> probatio.Schema:
+def _schema(*, include_username: bool, include_backfill: bool) -> probatio.Schema:
     fields: dict[Any, Any] = {}
     if include_username:
         fields[probatio.Required(CONF_USERNAME)] = str
     fields[probatio.Required(CONF_PASSWORD)] = str
+    if include_backfill:
+        fields[probatio.Optional(CONF_BACKFILL_DAYS, default=DEFAULT_BACKFILL_DAYS)] = (
+            NumberSelector(
+                NumberSelectorConfig(
+                    min=1,
+                    max=MAX_BACKFILL_DAYS,
+                    step=1,
+                    mode=NumberSelectorMode.BOX,
+                    unit_of_measurement="days",
+                )
+            )
+        )
     return probatio.Schema(fields)
