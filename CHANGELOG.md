@@ -1,5 +1,11 @@
 # Changelog
 
+## [2026.10.3](https://github.com/dangreco/ha-provident/compare/2026.10.2...2026.10.3)
+
+### Bug Fixes
+
+- import hourly statistics reliably with configurable backfill ([#4](https://github.com/dangreco/ha-provident/pull/4)) ([a72808d](https://github.com/dangreco/ha-provident/commit/a72808de5d6a04037f231972ccb738107071304b))
+
 ## [2026.10.2](https://github.com/dangreco/ha-provident/compare/2026.10.1...2026.10.2)
 
 ### Documentation
