@@ -21,11 +21,11 @@ Provident meters on your account:
 ## Supported functionality
 
 Each meter creates a device with three sensors:
-- **Total usage**: cumulative register reading (state class `total_increasing`), compatible with the Energy dashboard.
+- **Total usage**: cumulative register reading (state class `total_increasing`). The portal updates it once a day, so the Energy dashboard would put a whole day in one hour; use the hourly statistic instead.
 - **Usage today**: current day's consumption (`total_increasing`).
 - **Usage yesterday**: previous day's consumption (`total_increasing`, diagnostic).
 
-Up to 30 days of hourly consumption is imported into the recorder as external statistics (`provident:<serial>_hourly_consumption`).
+Up to 30 days of hourly usage is imported into the recorder as an external statistic per meter, named "<meter> <utility> hourly usage" (ID `provident:<serial>_hourly_consumption`). Use this statistic in the Energy dashboard.
 
 ## Data updates
 
@@ -82,8 +82,9 @@ Deleting the entry removes all associated devices, entities, and background poll
 ### Energy dashboard
 
 Under Settings → Dashboards → Energy:
-- Add electricity **Total usage** sensors under **Electricity grid** → **Add consumption**.
-- Add water **Total usage** sensors under **Water consumption** → **Add water source**.
+- Electricity: **Electricity grid** → **Add consumption** → pick "<meter> Electricity hourly usage".
+- Water: **Water consumption** → **Add water source** → pick "<meter> <utility> hourly usage".
+- Don't also add the **Total usage** sensor for the same meter, or that meter's usage is counted twice.
 
 ### Daily notification automation
 
