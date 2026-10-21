@@ -1,7 +1,8 @@
 # ha-provident
 
 Home Assistant integration for the [Provident](https://provident.meterconnex.com)
-(MeterConnex) utility portal. Not affiliated with or endorsed by Provident.
+(MeterConnex) utility portal via [`provident`](https://pypi.org/project/provident/).
+Not affiliated with or endorsed by Provident.
 
 ## Supported meters
 
