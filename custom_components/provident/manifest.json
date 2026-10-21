@@ -1,13 +1,19 @@
 {
   "domain": "provident",
   "name": "Provident",
-  "codeowners": ["@dangreco"],
+  "codeowners": [
+    "@dangreco"
+  ],
   "config_flow": true,
-  "dependencies": ["recorder"],
+  "dependencies": [
+    "recorder"
+  ],
   "documentation": "https://github.com/dangreco/ha-provident",
   "integration_type": "service",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/dangreco/ha-provident/issues",
-  "requirements": ["provident==0.2.2"],
-  "version": "2026.10.0"
+  "requirements": [
+    "provident==0.2.2"
+  ],
+  "version": "2026.10.1"
 }
