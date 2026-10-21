@@ -1,5 +1,10 @@
 # ha-provident
 
+[![CI](https://github.com/dangreco/ha-provident/actions/workflows/ci.yml/badge.svg)](https://github.com/dangreco/ha-provident/actions/workflows/ci.yml)
+[![GitHub Release](https://img.shields.io/github/v/release/dangreco/ha-provident)](https://github.com/dangreco/ha-provident/releases)
+[![HACS Default](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://hacs.xyz)
+[![License](https://img.shields.io/github/license/dangreco/ha-provident)](LICENSE)
+
 Home Assistant integration for the [Provident](https://provident.meterconnex.com)
 (MeterConnex) utility portal via [`provident`](https://pypi.org/project/provident/).
 Not affiliated with or endorsed by Provident.
