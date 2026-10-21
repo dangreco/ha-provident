@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 from enum import StrEnum
 from functools import cache
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     from provident import PublishedRates, RateEntry
@@ -36,6 +36,9 @@ class Plan(StrEnum):
     TOU = "tou"
     ULO = "ulo"
     TIERED = "tiered"
+    #: Not on the Regulated Price Plan: market price plus Global Adjustment, billed as one
+    #: rate per bill that Provident does not publish, so it is entered from each bill.
+    MARKET = "market"
 
 
 class Period(StrEnum):
@@ -46,6 +49,7 @@ class Period(StrEnum):
     WEEKEND_OFF_PEAK = "weekend_off_peak"
     TIER_1 = "tier_1"
     TIER_2 = "tier_2"
+    MARKET = "market"
 
 
 PLAN_PERIODS: dict[Plan, tuple[Period, ...]] = {
@@ -57,6 +61,7 @@ PLAN_PERIODS: dict[Plan, tuple[Period, ...]] = {
         Period.ON_PEAK,
     ),
     Plan.TIERED: (Period.TIER_1, Period.TIER_2),
+    Plan.MARKET: (Period.MARKET,),
 }
 
 #: Row labels of an EV section (compacted) that name a period.
@@ -80,6 +85,61 @@ def is_ev_section(heading: str) -> bool:
     return any(
         w in ("ev", "evs") or w.startswith(("vehicle", "charging", "charger")) for w in words
     )
+
+
+class DatedValue(Protocol):
+    """A value that depends on the day: what :class:`Tariff` prices with."""
+
+    def on(self, day: date) -> float | None: ...
+
+
+@dataclass(frozen=True)
+class BilledRate:
+    """One rate from a bill: ¢/kWh charged from ``start`` (inclusive)."""
+
+    start: date
+    cents: float
+
+
+@dataclass(frozen=True)
+class RateHistory:
+    """Rates entered from bills, each in effect until the next one starts."""
+
+    rates: tuple[BilledRate, ...]
+
+    def __post_init__(self) -> None:
+        ordered = tuple(sorted(self.rates, key=lambda r: r.start))
+        if len({r.start for r in ordered}) != len(ordered):
+            raise ValueError("two rates start on the same day")
+        object.__setattr__(self, "rates", ordered)
+
+    def on(self, day: date) -> float | None:
+        """¢/kWh on ``day``; ``None`` before the first entered rate."""
+        current = None
+        for rate in self.rates:
+            if rate.start > day:
+                break
+            current = rate.cents
+        return current
+
+    def changed_from(self, old: RateHistory | None) -> date | None:
+        """Earliest day priced differently than under ``old``; ``None`` if none."""
+        old_rates = old.rates if old is not None else ()
+        starts = {r.start for r in self.rates} | {r.start for r in old_rates}
+        empty = RateHistory(())
+        for day in sorted(starts):
+            if self.on(day) != (old or empty).on(day):
+                return day
+        return None
+
+    def to_list(self) -> list[dict[str, Any]]:
+        return [{"start": r.start.isoformat(), "cents": r.cents} for r in self.rates]
+
+    @classmethod
+    def from_list(cls, items: Iterable[Mapping[str, Any]]) -> RateHistory:
+        return cls(
+            tuple(BilledRate(date.fromisoformat(i["start"]), float(i["cents"])) for i in items)
+        )
 
 
 @dataclass(frozen=True)
@@ -357,11 +417,13 @@ class Tariff:
     """Prices one meter: energy by period (¢/kWh) plus fees ($ per 30 days) spread hourly."""
 
     plan: Plan
-    energy: Mapping[Period, Price]
-    fees: tuple[Price, ...] = ()
+    energy: Mapping[Period, DatedValue]
+    fees: tuple[DatedValue, ...] = ()
 
     def period(self, day: date, hour: int, month_to_date: float | None) -> Period | None:
         """``month_to_date``: kWh used earlier this calendar month (Tiered only)."""
+        if self.plan is Plan.MARKET:
+            return Period.MARKET
         if self.plan is Plan.TIERED:
             if month_to_date is None:
                 return None
@@ -414,7 +476,8 @@ class Tariff:
         self, day: date, hour: int, kwh: float, month_to_date: float | None
     ) -> float | None:
         if self.plan is not Plan.TIERED:
-            rate = self._rate(time_period(self.plan, day, hour), day)
+            period = self.period(day, hour, month_to_date)
+            rate = None if period is None else self._rate(period, day)
             return None if rate is None else kwh * rate
         if month_to_date is None:
             return None
@@ -435,22 +498,35 @@ KWH_PER_UNIT = {"kWh": 1.0, "Wh": 0.001, "MWh": 1000.0}
 
 
 def tariff_for(
-    schedule: RateSchedule | None, plan: Plan, *, ev: bool, include_fees: bool
+    schedule: RateSchedule | None,
+    plan: Plan,
+    *,
+    ev: bool,
+    include_fees: bool,
+    billed: RateHistory | None = None,
 ) -> Tariff | None:
     """The tariff for one meter, or ``None`` when it cannot be priced.
 
     Suite electricity uses the chosen plan's published prices. An EV meter is priced only from
-    an EV section of the page, read with the same plan; it never borrows suite prices.
+    an EV section of the page, read with the same plan; it never borrows suite prices. The
+    market plan prices suite electricity from ``billed`` (the rates entered from bills).
     """
-    if schedule is None or plan is Plan.NONE:
+    if plan is Plan.NONE:
+        return None
+    fees: tuple[DatedValue, ...] = ()
+    if include_fees and not ev:
+        if schedule is None or schedule.admin_fee is None or schedule.meter_fee is None:
+            return None
+        fees = (schedule.admin_fee, schedule.meter_fee)
+    if plan is Plan.MARKET:
+        # A bill's rate is for that building's suites; EV charging is billed separately.
+        if ev or billed is None or not billed.rates:
+            return None
+        return Tariff(plan=plan, energy={Period.MARKET: billed}, fees=fees)
+    if schedule is None:
         return None
     energy = schedule.ev if ev else schedule.energy.get(plan, {})
     needed = PLAN_PERIODS[plan]
     if not all(period in energy for period in needed):
         return None
-    fees: tuple[Price, ...] = ()
-    if include_fees and not ev:
-        if schedule.admin_fee is None or schedule.meter_fee is None:
-            return None
-        fees = (schedule.admin_fee, schedule.meter_fee)
     return Tariff(plan=plan, energy={p: energy[p] for p in needed}, fees=fees)

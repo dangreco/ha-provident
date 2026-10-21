@@ -64,7 +64,8 @@
           "ultra_low_overnight": "Ultra-low overnight",
           "weekend_off_peak": "Weekend off-peak",
           "tier_1": "Tier 1",
-          "tier_2": "Tier 2"
+          "tier_2": "Tier 2",
+          "market": "Market price"
         }
       }
     }
@@ -99,10 +100,28 @@
           "include_fees": "Include Provident fees"
         },
         "data_description": {
-          "rate_plan": "The plan on your Provident bill. Changing it re-prices the imported cost history.",
+          "rate_plan": "The plan on your Provident bill. Separate On-Peak/Mid-Peak/Off-Peak lines mean Time-of-Use; one rate that changes monthly means Market price. Changing it re-prices the imported cost history.",
           "include_fees": "Spread the monthly administration and meter fees evenly over every hour."
         }
+      },
+      "billed_rates": {
+        "title": "Rates from your bills",
+        "description": "Your building isn't on a Regulated Price Plan, so each bill charges one electricity rate (for example \"269.00 kWh @ 0.095\" is 9.5 ¢/kWh). Add the rate from each bill and the first day of its reading period; it applies until the next rate starts.\n\nEntered so far:\n{rates}",
+        "data": {
+          "start": "Reading period start",
+          "cents": "Rate",
+          "remove": "Remove a rate",
+          "add_another": "Add another after this"
+        },
+        "data_description": {
+          "start": "The first reading date on the bill (\"Previous\" reading date). Re-entering a date corrects that bill's rate.",
+          "cents": "The rate on the Electricity Charge line, in cents (0.095 $/kWh is 9.5)."
+        }
       }
+    },
+    "error": {
+      "billed_rate_incomplete": "Enter both the reading period start and the rate, or neither.",
+      "billed_rates_required": "Add at least one rate from a bill."
     }
   },
   "selector": {
@@ -111,7 +130,8 @@
         "none": "None (no cost tracking)",
         "tou": "Time-of-Use",
         "ulo": "Ultra-Low Overnight",
-        "tiered": "Tiered"
+        "tiered": "Tiered",
+        "market": "Market price (rate from your bill)"
       }
     }
   }

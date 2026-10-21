@@ -33,7 +33,7 @@ from .const import (
     meter_unit_info,
 )
 from .coordinator import call_portal
-from .rates import KWH_PER_UNIT, Plan, RateSchedule
+from .rates import KWH_PER_UNIT, Plan, RateHistory, RateSchedule
 
 if TYPE_CHECKING:
     from homeassistant.components.recorder.statistics import StatisticsRow
@@ -229,6 +229,7 @@ async def _sync_meter(
     coordinator.priced[meter.serial] = {
         **_pricing_key(coordinator),
         "rates": coordinator.rates.to_dict() if coordinator.rates else None,
+        "billed": coordinator.billed.to_list(),
     }
 
 
@@ -243,7 +244,8 @@ async def _cost_window(
     """Where the cost statistic must be (re)imported from.
 
     A new plan or fee choice clears the statistic and prices the whole backfill again; a
-    rates change re-prices from the first day it affects; otherwise only the usual window.
+    change of published or billed rates re-prices from the first day it affects; otherwise
+    only the usual window.
     """
     cost_id = cost_statistic_id(meter)
     previous = coordinator.priced.get(meter.serial)
@@ -254,12 +256,18 @@ async def _cost_window(
         coordinator.priced.pop(meter.serial, None)
         return earliest, 0.0
     first, base = _window(await _last_row(hass, cost_id), earliest, today, tz)
+    changes: list[date] = []
     if previous is not None and coordinator.rates is not None:
         old = RateSchedule.from_dict(previous["rates"]) if previous.get("rates") else None
-        changed = coordinator.rates.changed_from(old)
-        if changed is not None and changed < first:
-            first = max(earliest, changed)
-            base = None
+        if (changed := coordinator.rates.changed_from(old)) is not None:
+            changes.append(changed)
+    if previous is not None and coordinator.plan is Plan.MARKET:
+        old_billed = RateHistory.from_list(previous.get("billed", []))
+        if (changed := coordinator.billed.changed_from(old_billed)) is not None:
+            changes.append(changed)
+    if changes and min(changes) < first:
+        first = max(earliest, min(changes))
+        base = None
     return first, base
 
 

@@ -32,9 +32,11 @@ Up to 30 days of hourly usage is imported into the recorder as an external stati
 With a price plan set in the options, electricity meters also get:
 - **Hourly cost statistic**: "<meter> Electricity hourly cost" (ID `provident:<serial>_hourly_cost`, CAD), priced hour by hour from the rates Provident publishes for your building.
 - **Current price**: energy price in effect now (CAD/kWh).
-- **Price period**: off-peak, mid-peak, on-peak, ultra-low overnight, weekend off-peak, tier 1, or tier 2.
+- **Price period**: off-peak, mid-peak, on-peak, ultra-low overnight, weekend off-peak, tier 1, tier 2, or market price.
 
 Prices follow the Ontario Energy Board's rules: summer and winter Time-of-Use hours, Ultra-Low Overnight hours, weekends and OEB holidays (including the next-weekday rule when a holiday falls on a weekend), and the tiered threshold (600 kWh per 30 days in summer, 1,000 in winter, counted per calendar month). Each hour uses the price that was in effect that day, so history spanning a November 1 price change is priced correctly.
+
+Buildings not on a Regulated Price Plan pay the market price plus the Global Adjustment, billed as a single rate that changes every bill and isn't on the rates page. For those, choose **Market price** and enter the rate from each bill; every hour of a bill's period is priced at that bill's rate, so the energy cost matches the bill's Electricity Charge line.
 
 The cost covers **energy plus, optionally, Provident's administration and meter fees** (spread evenly over every hour of a 30-day month). It **excludes HST**, delivery, regulatory charges, and rebates, which Provident does not publish, so it will be lower than your bill. At low usage the fees can be most of the hourly cost.
 
@@ -74,8 +76,9 @@ One config entry is created per portal account. Use **Reconfigure** to update cr
 ### Options
 
 Under Settings → Devices & services → **Provident** → **Configure**:
-- **Price plan**: None (default, no cost tracking), Time-of-Use, Ultra-Low Overnight, or Tiered. Use the plan on your Provident bill; the rates page lists every plan and doesn't say which one your building is on. Changing it re-prices the whole imported cost history.
+- **Price plan**: None (default, no cost tracking), Time-of-Use, Ultra-Low Overnight, Tiered, or Market price. Use the plan on your Provident bill; the rates page lists every regulated plan and doesn't say which one your building is on. Under "Your Electricity Charges", separate On-Peak/Mid-Peak/Off-Peak lines mean Time-of-Use; a single "kWh @ rate" line whose rate changes from bill to bill means Market price. Changing the plan re-prices the whole imported cost history.
 - **Include Provident fees**: add the administration and meter fees to each hour (default on).
+- **Rates from your bills** (Market price only): for each bill, the first reading date and the rate on its Electricity Charge line in cents (`269.00 kWh @ 0.095` is 9.5 ¢/kWh). A rate applies until the next one starts, and the latest keeps applying until you add the next bill. Adding or correcting a bill re-prices only the days it covers. Re-enter a date to correct its rate, or remove one.
 
 ## Removal
 
@@ -90,7 +93,8 @@ Deleting the entry removes all associated devices, entities, and background poll
 - Electricity readings are delayed up to 24 hours by the portal.
 - Cost excludes HST, delivery, regulatory charges, and rebates (see [Rates and cost](#rates-and-cost)).
 - Only electricity is priced. EV charging meters are priced only if your rates page has its own EV charging section; they never borrow suite electricity prices. Water, gas, heating, and cooling rates aren't priced yet; if your rates page lists them, please share **Download diagnostics** in an issue.
-- Hours before the earliest price shown on the rates page get no cost row.
+- Hours before the earliest price shown on the rates page (or, for Market price, the first entered bill) get no cost row.
+- Market price lags by a bill: until you enter the latest bill, recent hours use the previous bill's rate. Adding the bill corrects them. The price sensors show that rate too, not the live market price.
 
 ## Troubleshooting
 

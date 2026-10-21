@@ -124,9 +124,10 @@ async def test_real_rates_price_the_real_meter(
     coordinator = entry.runtime_data
     rates = coordinator.rates
     assert rates is not None, "rates page not fetched"
-    # Every plan fully published, plus both fees; nothing unrecognized on the live page.
-    for plan, periods in PLAN_PERIODS.items():
-        assert set(rates.energy[plan]) == set(periods), plan
+    # Every regulated plan fully published, plus both fees; nothing unrecognized on the page.
+    # (Market price is never published: it's entered from bills.)
+    for plan in (Plan.TOU, Plan.ULO, Plan.TIERED):
+        assert set(rates.energy[plan]) == set(PLAN_PERIODS[plan]), plan
     assert rates.admin_fee is not None and rates.meter_fee is not None
     assert not rates.unknown, rates.unknown
 
@@ -169,3 +170,68 @@ async def test_real_rates_price_the_real_meter(
         period = hass.states.get(f"{slug}_price_period")
         assert price is not None and 0 < float(price.state) < 1, price
         assert period is not None and Period(period.state) in PLAN_PERIODS[Plan.TOU], period
+
+
+async def test_real_meter_priced_at_a_billed_market_rate(
+    recorder_mock: Recorder,
+    hass: HomeAssistant,
+    real_credentials: dict[str, str],
+) -> None:
+    """Live: the market plan prices every real hour at the entered bill rate."""
+    from homeassistant import loader
+    from homeassistant.components.recorder.statistics import statistics_during_period
+    from provident import Utility
+
+    from custom_components.provident.const import (
+        CONF_BILLED_RATES,
+        CONF_INCLUDE_FEES,
+        CONF_RATE_PLAN,
+    )
+    from custom_components.provident.statistics import cost_statistic_id, statistic_id
+
+    await hass.config.async_set_time_zone("America/Toronto")
+    hass.data.pop(loader.DATA_CUSTOM_COMPONENTS, None)
+    start = (dt_util.now() - timedelta(days=60)).date().isoformat()
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Provident (e2e)",
+        data=real_credentials,
+        options={
+            CONF_RATE_PLAN: "market",
+            CONF_INCLUDE_FEES: False,
+            CONF_BILLED_RATES: [{"start": start, "cents": 9.5}],
+        },
+        unique_id=real_credentials[CONF_USERNAME],
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    await async_wait_recording_done(hass)
+
+    coordinator = entry.runtime_data
+    # Market without fees needs nothing from the rates site.
+    assert coordinator.rates is None
+    for meter_data in coordinator.data.meters:
+        meter = meter_data.meter
+        if meter.utility != Utility.ELECTRICITY:
+            continue
+        rows: dict[str, list[Any]] = {}
+        for stat_id in (statistic_id(meter), cost_statistic_id(meter)):
+            result = await hass.async_add_executor_job(
+                statistics_during_period,  # type: ignore[arg-type]
+                hass,
+                dt_util.utcnow() - timedelta(days=40),
+                None,
+                {stat_id},
+                "hour",
+                None,
+                {"state"},
+            )
+            rows[stat_id] = list(result.get(stat_id, []))
+        usage = {r["start"]: r["state"] for r in rows[statistic_id(meter)]}
+        cost = rows[cost_statistic_id(meter)]
+        assert len(cost) == len(usage) > 24 * 20
+        for row in cost:
+            assert row["state"] == pytest.approx(usage[row["start"]] * 0.095, abs=1e-4), row
+        price = hass.states.get(f"sensor.{meter.name}_electricity_current_price")
+        assert price is not None and float(price.state) == pytest.approx(0.095)

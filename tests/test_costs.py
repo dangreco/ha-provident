@@ -23,6 +23,8 @@ from pytest_homeassistant_custom_component.components.recorder.common import (
 )
 
 from custom_components.provident.const import (
+    CONF_BACKFILL_DAYS,
+    CONF_BILLED_RATES,
     CONF_INCLUDE_FEES,
     CONF_RATE_PLAN,
     DEFAULT_BACKFILL_DAYS,
@@ -72,12 +74,18 @@ async def _sync(hass: HomeAssistant, entry: MockConfigEntry) -> None:
 
 
 async def _setup(
-    hass: HomeAssistant, entry: MockConfigEntry, plan: Plan, *, include_fees: bool = True
+    hass: HomeAssistant,
+    entry: MockConfigEntry,
+    plan: Plan,
+    *,
+    include_fees: bool = True,
+    billed: list[dict[str, Any]] | None = None,
 ) -> None:
     entry.add_to_hass(hass)
-    hass.config_entries.async_update_entry(
-        entry, options={CONF_RATE_PLAN: str(plan), CONF_INCLUDE_FEES: include_fees}
-    )
+    options: dict[str, Any] = {CONF_RATE_PLAN: str(plan), CONF_INCLUDE_FEES: include_fees}
+    if billed is not None:
+        options[CONF_BILLED_RATES] = billed
+    hass.config_entries.async_update_entry(entry, options=options)
     assert await hass.config_entries.async_setup(entry.entry_id)
     await _settle(hass)
 
@@ -259,7 +267,8 @@ async def test_rate_change_reprices_from_its_effective_date(
             assert row["state"] == pytest.approx(before[row["start"]], abs=1e-6)
     # The whole backfill is after 2025-11-01, so every on-peak hour was re-priced.
     assert changed > 50
-    assert after[-1]["sum"] == pytest.approx(sum(r["state"] for r in after), abs=1e-3)
+    # Stored states are rounded per hour; the running sum isn't.
+    assert after[-1]["sum"] == pytest.approx(sum(r["state"] for r in after), abs=0.01)
 
 
 async def test_price_and_period_sensors_follow_the_clock(
@@ -404,3 +413,152 @@ async def test_diagnostics_include_the_rates(
     priced = {m["utility"]: m["priced"] for m in diagnostics["meters"]}
     assert priced == {"Electricity": True, "Cold Water": False, "Hot Water": False}
     assert "hunter2" not in repr(diagnostics)
+
+
+# The Sep 2026 bill: "Electricity Charge (269.00 kWh @ 0.095)", reading period Aug 15 – Sep 15.
+AUG_BILL = {"start": "2026-08-15", "cents": 9.5}
+
+
+async def test_market_plan_prices_every_hour_at_the_billed_rate(
+    recorder_mock: Recorder, hass: HomeAssistant, portal, frozen, patch_client, mock_config_entry
+) -> None:
+    await _setup(hass, mock_config_entry, Plan.MARKET, include_fees=False, billed=[AUG_BILL])
+    # Without fees the market plan never needs the rates site.
+    assert not [r for r in portal.requests if r[1] in (RATES_LOGIN, RATES_PAGE)]
+
+    usage = {r["start"]: r["state"] for r in await _rows(hass, ELECTRICITY_USAGE)}
+    cost = await _rows(hass, ELECTRICITY_COST)
+    assert len(cost) == len(usage)
+    for row in cost:
+        assert row["state"] == pytest.approx(usage[row["start"]] * 0.095, abs=1e-4)
+
+    price, period = hass.states.get(PRICE), hass.states.get(PERIOD)
+    assert price is not None and float(price.state) == pytest.approx(0.095)
+    assert period is not None and period.state == "market"
+    assert period.attributes["options"] == ["market"]
+
+
+async def test_market_plan_matches_the_bills_electricity_charge(
+    recorder_mock: Recorder,
+    hass: HomeAssistant,
+    portal,
+    freezer,
+    patch_client,
+    mock_config_entry,
+) -> None:
+    """269 kWh over the bill's reading period at 9.5¢ is the bill's Electricity Charge."""
+    await hass.config.async_set_time_zone("America/Toronto")
+    freezer.move_to(datetime(2026, 9, 20, 12, 0, tzinfo=dt_util.UTC))
+    tz = dt_util.get_time_zone("America/Toronto")
+    assert tz is not None
+    period_days = [date(2026, 8, 15) + timedelta(days=i) for i in range(31)]
+    # Spread exactly 269 kWh over the reading period (Aug 15 00:00 to Sep 15 00:00 local).
+    portal.origin = date(2026, 8, 1)
+    per_hour = 269 / (len(period_days) * 24)
+    for day in period_days:
+        for hour in range(24):
+            portal.set_hour("Electricity", day, hour, per_hour)
+    # Back far enough to cover the whole reading period.
+    mock_config_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        mock_config_entry,
+        data={**mock_config_entry.data, CONF_BACKFILL_DAYS: 40},
+        options={
+            CONF_RATE_PLAN: "market",
+            CONF_INCLUDE_FEES: False,
+            CONF_BILLED_RATES: [AUG_BILL],
+        },
+    )
+    assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await _settle(hass)
+
+    start = bucket_start(period_days[0], 0, tz).timestamp()
+    end = bucket_start(date(2026, 9, 15), 0, tz).timestamp()
+    rows = await _rows(hass, ELECTRICITY_COST)
+    # The Energy dashboard charges the change in the running sum over the period (hourly
+    # states are rounded for display; the sum isn't).
+    before = next((r["sum"] for r in reversed(rows) if r["start"] < start), 0.0)
+    last = next(r["sum"] for r in reversed(rows) if r["start"] < end)
+    assert last - before == pytest.approx(269 * 0.095, abs=0.005)
+    # The bill shows $25.54: its printed rate (0.095) is itself rounded, so within 2¢.
+    assert last - before == pytest.approx(25.54, abs=0.02)
+
+
+async def test_adding_a_bill_reprices_only_its_period(
+    recorder_mock: Recorder, hass: HomeAssistant, portal, frozen, patch_client, mock_config_entry
+) -> None:
+    await _setup(hass, mock_config_entry, Plan.MARKET, include_fees=False, billed=[AUG_BILL])
+    before = {r["start"]: r["state"] for r in await _rows(hass, ELECTRICITY_COST)}
+    usage = {r["start"]: r["state"] for r in await _rows(hass, ELECTRICITY_USAGE)}
+
+    # Through the options flow, as a user would: keep the plan, add the next bill.
+    result = await hass.config_entries.options.async_init(mock_config_entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], user_input={CONF_RATE_PLAN: "market", CONF_INCLUDE_FEES: False}
+    )
+    assert result["type"] is FlowResultType.FORM and result["step_id"] == "billed_rates"
+    placeholders = result["description_placeholders"]
+    assert placeholders is not None and "from 2026-08-15: 9.5 ¢/kWh" in placeholders["rates"]
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], user_input={"start": "2026-10-15", "cents": 10.2, "add_another": False}
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await _settle(hass)
+    assert mock_config_entry.options[CONF_BILLED_RATES] == [
+        AUG_BILL,
+        {"start": "2026-10-15", "cents": 10.2},
+    ]
+
+    tz = dt_util.get_default_time_zone()
+    new_from = bucket_start(date(2026, 10, 15), 0, tz).timestamp()
+    after = await _rows(hass, ELECTRICITY_COST)
+    assert len(after) == len(before)
+    for row in after:
+        rate = 0.102 if row["start"] >= new_from else 0.095
+        assert row["state"] == pytest.approx(usage[row["start"]] * rate, abs=1e-4), row
+        if row["start"] < new_from:
+            assert row["state"] == pytest.approx(before[row["start"]], abs=1e-6)
+    assert after[-1]["sum"] == pytest.approx(sum(r["state"] for r in after), abs=0.01)
+    assert float(hass.states.get(PRICE).state) == pytest.approx(0.102)  # type: ignore[union-attr]
+
+
+async def test_billed_rates_step_validates_and_removes(
+    recorder_mock: Recorder, hass: HomeAssistant, portal, frozen, patch_client, mock_config_entry
+) -> None:
+    await _setup(hass, mock_config_entry, Plan.NONE)
+    result = await hass.config_entries.options.async_init(mock_config_entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], user_input={CONF_RATE_PLAN: "market", CONF_INCLUDE_FEES: False}
+    )
+    flow = result["flow_id"]
+    # Nothing entered yet: a rate is required.
+    result = await hass.config_entries.options.async_configure(flow, user_input={})
+    assert result["errors"] == {"base": "billed_rates_required"}
+    # Half an entry is rejected.
+    result = await hass.config_entries.options.async_configure(flow, user_input={"cents": 9.5})
+    assert result["errors"] == {"base": "billed_rate_incomplete"}
+    # Add two, correct one by re-entering its date, then remove the other.
+    result = await hass.config_entries.options.async_configure(
+        flow, user_input={"start": "2026-08-15", "cents": 9.4, "add_another": True}
+    )
+    result = await hass.config_entries.options.async_configure(
+        flow, user_input={"start": "2026-09-15", "cents": 9.9, "add_another": True}
+    )
+    result = await hass.config_entries.options.async_configure(
+        flow, user_input={"start": "2026-08-15", "cents": 9.5, "add_another": True}
+    )
+    result = await hass.config_entries.options.async_configure(
+        flow, user_input={"remove": "2026-09-15", "add_another": False}
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_BILLED_RATES] == [AUG_BILL]
+    await _settle(hass)
+    assert mock_config_entry.runtime_data.plan is Plan.MARKET
+
+
+async def test_market_without_bills_prices_nothing(
+    recorder_mock: Recorder, hass: HomeAssistant, portal, frozen, patch_client, mock_config_entry
+) -> None:
+    await _setup(hass, mock_config_entry, Plan.MARKET, include_fees=False, billed=[])
+    assert await _rows(hass, ELECTRICITY_COST) == []
+    assert hass.states.get(PRICE) is None
