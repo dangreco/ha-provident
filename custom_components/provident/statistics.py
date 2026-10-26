@@ -95,7 +95,7 @@ async def async_sync_statistics(hass: HomeAssistant, coordinator: ProvidentCoord
         _LOGGER.debug("Statistics sync already running; skipping")
         return
     async with coordinator.statistics_lock:
-        priced_before = dict(coordinator.priced)
+        state_before = (dict(coordinator.priced), dict(coordinator.backfilled))
         for meter_data in data.meters:
             meter = meter_data.meter
             _device_class, unit, unit_class = meter_unit_info(meter)
@@ -114,7 +114,7 @@ async def async_sync_statistics(hass: HomeAssistant, coordinator: ProvidentCoord
                 _LOGGER.warning("Statistics sync failed for meter %s: %s", meter.serial, err)
         # Commit rows so the next sync's get_last_statistics sees them.
         await get_instance(hass).async_block_till_done()
-        if coordinator.priced != priced_before:
+        if (coordinator.priced, coordinator.backfilled) != state_before:
             await coordinator.async_save_state()
 
 
@@ -151,11 +151,22 @@ async def _sum_before(hass: HomeAssistant, stat_id: str, start: datetime) -> flo
 
 
 def _window(
-    last: StatisticsRow | None, earliest: date, today: date, tz: tzinfo
+    last: StatisticsRow | None,
+    earliest: date,
+    today: date,
+    tz: tzinfo,
+    *,
+    backfill: bool = False,
 ) -> tuple[date, float | None]:
-    """First day to (re)import and, if the newest row predates it, that row's sum."""
+    """First day to (re)import and, if the newest row predates it, that row's sum.
+
+    ``backfill`` forces the import to start at ``earliest`` (the statistic was never imported
+    that far back); the caller then reads the baseline from the rows before it.
+    """
     if last is None:
         return earliest, 0.0
+    if backfill:
+        return earliest, None
     last_start = dt_util.utc_from_timestamp(float(last["start"]))
     first_day = max(
         earliest, min(today - timedelta(days=REFETCH_DAYS), last_start.astimezone(tz).date())
@@ -164,6 +175,11 @@ def _window(
         # Newest row predates the window (capped by earliest): its sum is the baseline.
         return first_day, float(last["sum"] or 0.0)
     return first_day, None
+
+
+def _needs_backfill(coordinator: ProvidentCoordinator, stat_id: str) -> bool:
+    """Whether ``stat_id`` was never imported ``backfill_days`` back (e.g. a larger setting)."""
+    return coordinator.backfilled.get(stat_id, 0) < coordinator.backfill_days
 
 
 async def _sync_meter(
@@ -178,7 +194,13 @@ async def _sync_meter(
     assert tz is not None
     earliest = today - timedelta(days=coordinator.backfill_days)
     usage_id = statistic_id(meter)
-    usage_first, usage_base = _window(await _last_row(hass, usage_id), earliest, today, tz)
+    usage_first, usage_base = _window(
+        await _last_row(hass, usage_id),
+        earliest,
+        today,
+        tz,
+        backfill=_needs_backfill(coordinator, usage_id),
+    )
 
     tariff = coordinator.tariff(meter)
     cost_id = cost_statistic_id(meter)
@@ -200,6 +222,8 @@ async def _sync_meter(
     if usage_stats:
         async_add_external_statistics(hass, metadata(meter, unit, unit_class), usage_stats)
         _LOGGER.debug("Imported %d hourly statistics for %s", len(usage_stats), usage_id)
+    if usage_first == earliest:
+        coordinator.backfilled[usage_id] = coordinator.backfill_days
 
     if tariff is None or cost_first is None:
         return
@@ -226,6 +250,8 @@ async def _sync_meter(
     if cost_stats:
         async_add_external_statistics(hass, cost_metadata(meter), cost_stats)
         _LOGGER.debug("Imported %d hourly costs for %s", len(cost_stats), cost_id)
+    if cost_first == earliest:
+        coordinator.backfilled[cost_id] = coordinator.backfill_days
     coordinator.priced[meter.serial] = {
         **_pricing_key(coordinator),
         "rates": coordinator.rates.to_dict() if coordinator.rates else None,
@@ -255,7 +281,13 @@ async def _cost_window(
         await _clear(hass, cost_id)
         coordinator.priced.pop(meter.serial, None)
         return earliest, 0.0
-    first, base = _window(await _last_row(hass, cost_id), earliest, today, tz)
+    first, base = _window(
+        await _last_row(hass, cost_id),
+        earliest,
+        today,
+        tz,
+        backfill=_needs_backfill(coordinator, cost_id),
+    )
     changes: list[date] = []
     if previous is not None and coordinator.rates is not None:
         old = RateSchedule.from_dict(previous["rates"]) if previous.get("rates") else None

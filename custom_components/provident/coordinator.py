@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING, Any, TypeVar, override
 
@@ -98,6 +99,10 @@ class ProvidentCoordinator(DataUpdateCoordinator[ProvidentData]):
         self._rates_retry_at: datetime | None = None
         #: Per meter serial: the tariff its cost statistic was last imported with.
         self.priced: dict[str, dict[str, Any]] = {}
+        #: Per statistic id: the ``backfill_days`` its history was last imported back to.
+        self.backfilled: dict[str, int] = {}
+        #: Last good data per meter id; serves a meter whose own portal call failed.
+        self._last_meter_data: dict[int, tuple[date, MeterData]] = {}
 
     async def async_load_state(self) -> None:
         """Restore the last good rates and the pricing state of cost statistics."""
@@ -107,6 +112,7 @@ class ProvidentCoordinator(DataUpdateCoordinator[ProvidentData]):
             fetched = stored.get("rates_fetched_at")
             self._rates_fetched_at = dt_util.parse_datetime(fetched) if fetched else None
         self.priced = dict(stored.get("priced", {}))
+        self.backfilled = {k: int(v) for k, v in stored.get("backfilled", {}).items()}
 
     async def async_save_state(self) -> None:
         await self._store.async_save(
@@ -116,6 +122,7 @@ class ProvidentCoordinator(DataUpdateCoordinator[ProvidentData]):
                     self._rates_fetched_at.isoformat() if self._rates_fetched_at else None
                 ),
                 "priced": self.priced,
+                "backfilled": self.backfilled,
             }
         )
 
@@ -266,23 +273,40 @@ class ProvidentCoordinator(DataUpdateCoordinator[ProvidentData]):
 
         await self._maybe_refresh_rates()
 
-        meter_data: list[MeterData] = []
-        for meter in meters:
-            daily = await self._daily(meter, today)
-            month_to_date = None
-            if self.plan is Plan.TIERED and self.tariff(meter) is not None:
-                month_to_date = await self._month_to_date(meter, today, daily)
-            meter_data.append(
-                MeterData(
-                    meter=meter,
-                    register=registers.get(meter.id),
-                    daily=daily,
-                    month_to_date=month_to_date,
-                )
-            )
+        meter_data = [await self._meter_data(m, today, registers.get(m.id)) for m in meters]
         return ProvidentData(
             account=account, meters=tuple(meter_data), today=today, rates=self.rates
         )
+
+    async def _meter_data(self, meter: Meter, today: date, register: ReportRow | None) -> MeterData:
+        """One meter's data, so a flaky call does not blank every meter.
+
+        A transport error is retried once; if the meter still fails, its last good data from
+        the same local day is kept. Session expiry always propagates (the caller re-logs in).
+        """
+        try:
+            try:
+                return await self._read_meter(meter, today, register)
+            except TransportError as err:
+                _LOGGER.debug("Retrying meter %s after: %s", meter.serial, err)
+                return await self._read_meter(meter, today, register)
+        except _CLIENT_ERRORS as err:
+            if isinstance(err, HTTPStatusError) and err.status in _SESSION_EXPIRED:
+                raise
+            cached = self._last_meter_data.get(meter.id)
+            if cached is None or cached[0] != today:
+                raise
+            _LOGGER.warning("Meter %s unavailable, keeping its last data: %s", meter.serial, err)
+            return replace(cached[1], register=register)
+
+    async def _read_meter(self, meter: Meter, today: date, register: ReportRow | None) -> MeterData:
+        daily = await self._daily(meter, today)
+        month_to_date = None
+        if self.plan is Plan.TIERED and self.tariff(meter) is not None:
+            month_to_date = await self._month_to_date(meter, today, daily)
+        data = MeterData(meter=meter, register=register, daily=daily, month_to_date=month_to_date)
+        self._last_meter_data[meter.id] = (today, data)
+        return data
 
     async def _month_to_date(self, meter: Meter, today: date, daily: DailyUsage) -> float:
         """Usage this calendar month so far, in kWh (published hours only)."""

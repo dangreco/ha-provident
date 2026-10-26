@@ -21,11 +21,13 @@ Provident meters on your account:
 ## Supported functionality
 
 Each meter creates a device with three sensors:
-- **Total usage**: cumulative register reading (state class `total_increasing`). The portal updates it once a day, so the Energy dashboard would put a whole day in one hour; use the hourly statistic instead.
-- **Usage today**: current day's consumption (`total_increasing`).
-- **Usage yesterday**: previous day's consumption (`total_increasing`, diagnostic).
+- **Total usage**: cumulative register reading. The portal updates it once a day, so the Energy dashboard would put a whole day in one hour; use the hourly statistic instead.
+- **Usage today**: current day's consumption.
+- **Usage yesterday**: previous day's consumption (diagnostic).
 
-Up to 30 days of hourly usage is imported into the recorder as an external statistic per meter, named "<meter> <utility> hourly usage" (ID `provident:<serial>_hourly_consumption`). Use this statistic in the Energy dashboard.
+These sensors have no state class on purpose, so only the hourly statistics are selectable in the Energy dashboard.
+
+Hourly usage is imported into the recorder as an external statistic per meter, named "<meter> <utility> hourly usage" (ID `provident:<serial>_hourly_consumption`). The default is 30 days of history; choose 1 to 365 days when you add the account, or change it later under **Reconfigure** (a larger value imports the older days on the next update). Use this statistic in the Energy dashboard.
 
 ### Rates and cost
 
@@ -46,7 +48,7 @@ Data is polled every 15 minutes. The portal updates meters on different schedule
 - **Electricity**: published once daily after the day ends. Today's usage reads 0 until the next day.
 - **Water**: published hourly.
 - **Registers**: reflect the end of the last complete day.
-- **Hourly statistics**: each sync refetches a trailing 2-day window to pick up late or restated hours.
+- **Hourly statistics**: each sync refetches the last 2 days plus today to pick up late or restated hours.
 - **Rates**: fetched once a day. If the rates site is down, the last rates are kept (also across restarts) and usage keeps updating. When Provident changes a price, the cost history is re-priced from the day it takes effect.
 
 ## Installation
@@ -95,10 +97,11 @@ Deleting the entry removes all associated devices, entities, and background poll
 - Only electricity is priced. EV charging meters are priced only if your rates page has its own EV charging section; they never borrow suite electricity prices. Water, gas, heating, and cooling rates aren't priced yet; if your rates page lists them, please share **Download diagnostics** in an issue.
 - Hours before the earliest price shown on the rates page (or, for Market price, the first entered bill) get no cost row.
 - Market price lags by a bill: until you enter the latest bill, recent hours use the previous bill's rate. Adding the bill corrects them. The price sensors show that rate too, not the live market price.
+- Daylight saving: the portal returns 24 hourly values for every local day, including the 23- and 25-hour days. The values are stored by wall-clock hour, so on the spring-forward day the 02:00 and 03:00 values share one hour in the statistics, and on the fall-back day the repeated hour has no row. Day totals are unaffected.
 
 ## Troubleshooting
 
-- **Sensors unavailable / cannot connect**: verify the portal is reachable in a browser. The integration retries automatically during portal downtime.
+- **Sensors unavailable / cannot connect**: verify the portal is reachable in a browser. A failed poll is retried every 15 minutes. If one meter's data can't be read, a transport error is retried once and that meter keeps its last data from the same day while the other meters update.
 - **Re-authentication requested**: the portal rejected the stored password. Click the notification or integration card to re-enter your password.
 - **Diagnostics**: select **Download diagnostics** on the integration page for a redacted debug export. It includes the rates read from the rates page and any rows that weren't recognized.
 - **No cost statistic or price sensors**: check that a price plan is set in the options, and that diagnostics show the plan's rates. A warning is logged if the rates page couldn't be read.

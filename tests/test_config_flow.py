@@ -178,6 +178,26 @@ async def test_reconfigure_flow(
     assert entry.state is ConfigEntryState.LOADED
 
 
+async def test_reconfigure_changes_backfill_days(
+    recorder_mock, hass: HomeAssistant, portal, patch_client: None, mock_config_entry
+) -> None:
+    mock_config_entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    result = await mock_config_entry.start_reconfigure_flow(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={**CREDENTIALS, CONF_BACKFILL_DAYS: 90}
+    )
+    await hass.async_block_till_done()
+
+    assert result["reason"] == "reconfigure_successful"
+    entry = hass.config_entries.async_get_entry(mock_config_entry.entry_id)
+    assert entry is not None
+    assert entry.data[CONF_BACKFILL_DAYS] == 90
+    assert entry.runtime_data.backfill_days == 90
+
+
 async def test_flow_translations_exist(
     recorder_mock, hass: HomeAssistant, portal, patch_client: None
 ) -> None:

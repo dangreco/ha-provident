@@ -118,6 +118,9 @@ class Portal:
     rates_session: str = "r1"
     #: Status the rates site answers with instead (simulates an outage), if set.
     rates_status_error: int | None = None
+    #: Meter node id -> number of upcoming ``quickgraphs`` requests for it that are dropped
+    #: without an answer (a transport error for the client).
+    graph_failures: dict[str, int] = field(default_factory=dict)
 
     def hour_value(self, utility: str, day: date, hour: int) -> float:
         idx = (day - self.origin).days * 24 + hour
@@ -265,6 +268,12 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _graphs(self, query: dict[str, list[str]], now: datetime) -> None:
         start = date.fromisoformat(query["startDate"][0])
+        with self.portal._lock:
+            for node in query["meterlist"][0].split(","):
+                if self.portal.graph_failures.get(node, 0) > 0:
+                    self.portal.graph_failures[node] -= 1
+                    self.close_connection = True
+                    return
         end = date.fromisoformat(query["endDate"][0])
         nodes = query["meterlist"][0].split(",")
         result: list[dict[str, Any]] = []
