@@ -238,6 +238,9 @@ async def test_snapshot_platform(
     from datetime import UTC as _UTC
     from datetime import datetime as _dt
 
+    # The fake portal's history starts 30 days before the real date; pin it so the snapshot
+    # (recorded on 2026-10-21) does not drift with the calendar.
+    portal.origin = _dt(2026, 9, 21).date()
     freezer.move_to(_dt(2026, 10, 20, 12, 0, tzinfo=_UTC))
     mock_config_entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
