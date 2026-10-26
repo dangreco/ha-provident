@@ -421,3 +421,52 @@ async def test_downtime_longer_than_refetch_window_has_no_gap(
     )
     assert after[-1]["sum"] > last_sum
     assert after[-1]["start"] > last_start + 4 * 24 * 3600
+
+
+async def test_raising_backfill_days_imports_older_days(
+    recorder_mock: Recorder,
+    freezer,
+    hass: HomeAssistant,
+    portal,
+    patch_client: None,
+    mock_config_entry,
+) -> None:
+    """A larger ``backfill_days`` fills the days before the first stored row, sums intact."""
+    frozen_now = datetime(2026, 10, 20, 12, 0, tzinfo=dt_util.UTC)
+    freezer.move_to(frozen_now)
+    mock_config_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        mock_config_entry, data={**mock_config_entry.data, CONF_BACKFILL_DAYS: 7}
+    )
+    assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    await async_wait_recording_done(hass)
+
+    coordinator = mock_config_entry.runtime_data
+    before = {r["start"]: r["state"] for r in await _stats(hass, COLD_WATER_ID)}
+    assert coordinator.backfilled[COLD_WATER_ID] == 7
+
+    coordinator.backfill_days = 30
+    await _sync(hass, mock_config_entry)
+
+    rows = await _stats(hass, COLD_WATER_ID)
+    first = bucket_start(coordinator.data.today - timedelta(days=30), 0, dt_util.UTC)
+    assert rows[0]["start"] == first.timestamp()
+    assert len(rows) == int((frozen_now - first).total_seconds() // 3600)
+    starts = [r["start"] for r in rows]
+    assert all(b - a == 3600 for a, b in zip(starts, starts[1:], strict=False))
+    assert rows[0]["sum"] == pytest.approx(rows[0]["state"], abs=1e-3)
+    assert all(
+        cur["sum"] - prev["sum"] == pytest.approx(cur["state"], abs=1e-3)
+        for prev, cur in zip(rows, rows[1:], strict=False)
+    )
+    # Hours that were already imported keep their values.
+    assert all(
+        r["state"] == pytest.approx(before[r["start"]], abs=1e-3)
+        for r in rows
+        if r["start"] in before
+    )
+    assert coordinator.backfilled[COLD_WATER_ID] == 30
+    stored = await coordinator._store.async_load()
+    assert stored is not None
+    assert stored["backfilled"][COLD_WATER_ID] == 30

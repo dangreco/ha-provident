@@ -126,12 +126,20 @@ class ProvidentConfigFlow(ConfigFlow, domain=DOMAIN):
                     return self.async_abort(reason="no_meters")
                 return self.async_update_reload_and_abort(
                     entry,
-                    data_updates={CONF_USERNAME: username, CONF_PASSWORD: password},
+                    data_updates={
+                        CONF_USERNAME: username,
+                        CONF_PASSWORD: password,
+                        CONF_BACKFILL_DAYS: int(user_input[CONF_BACKFILL_DAYS]),
+                    },
                 )
 
         return self.async_show_form(
             step_id="reconfigure",
-            data_schema=_schema(include_username=True, include_backfill=False),
+            data_schema=_schema(
+                include_username=True,
+                include_backfill=True,
+                backfill_default=int(entry.data.get(CONF_BACKFILL_DAYS, DEFAULT_BACKFILL_DAYS)),
+            ),
             errors=errors,
         )
 
@@ -165,21 +173,24 @@ class ProvidentConfigFlow(ConfigFlow, domain=DOMAIN):
         )
 
 
-def _schema(*, include_username: bool, include_backfill: bool) -> probatio.Schema:
+def _schema(
+    *,
+    include_username: bool,
+    include_backfill: bool,
+    backfill_default: int = DEFAULT_BACKFILL_DAYS,
+) -> probatio.Schema:
     fields: dict[Any, Any] = {}
     if include_username:
         fields[probatio.Required(CONF_USERNAME)] = str
     fields[probatio.Required(CONF_PASSWORD)] = str
     if include_backfill:
-        fields[probatio.Optional(CONF_BACKFILL_DAYS, default=DEFAULT_BACKFILL_DAYS)] = (
-            NumberSelector(
-                NumberSelectorConfig(
-                    min=1,
-                    max=MAX_BACKFILL_DAYS,
-                    step=1,
-                    mode=NumberSelectorMode.BOX,
-                    unit_of_measurement="days",
-                )
+        fields[probatio.Optional(CONF_BACKFILL_DAYS, default=backfill_default)] = NumberSelector(
+            NumberSelectorConfig(
+                min=1,
+                max=MAX_BACKFILL_DAYS,
+                step=1,
+                mode=NumberSelectorMode.BOX,
+                unit_of_measurement="days",
             )
         )
     return probatio.Schema(fields)

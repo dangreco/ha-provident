@@ -10,15 +10,19 @@
           "backfill_days": "History to import"
         },
         "data_description": {
-          "backfill_days": "Days of hourly usage to import into the Energy dashboard when the account is first connected."
+          "backfill_days": "Days of hourly usage to import into the Energy dashboard."
         }
       },
       "reconfigure": {
         "title": "Reconfigure Provident",
-        "description": "Change the account credentials used to reach the Provident portal.",
+        "description": "Change the account credentials used to reach the Provident portal, or how far back hourly usage is imported. A larger value imports the older days on the next update.",
         "data": {
           "username": "Username",
-          "password": "Password"
+          "password": "Password",
+          "backfill_days": "History to import"
+        },
+        "data_description": {
+          "backfill_days": "Days of hourly usage to import into the Energy dashboard."
         }
       },
       "reauth_confirm": {

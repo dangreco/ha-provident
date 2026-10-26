@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from unittest.mock import patch
 
 from homeassistant.config_entries import ConfigEntryState
@@ -110,3 +111,50 @@ async def test_register_falls_back_when_ha_clock_is_ahead_of_portal(
         assert meter_data.register is not None
         assert not meter_data.register.error, meter_data.meter.serial
         assert meter_data.register.current is not None
+
+
+async def test_transport_error_is_retried_once(
+    recorder_mock, hass: HomeAssistant, portal, setup_entry
+) -> None:
+    await hass.async_block_till_done()
+    coordinator = setup_entry.runtime_data
+    portal.graph_failures[portal.meters[0]["node"]] = 1
+
+    await coordinator.async_refresh()
+
+    assert coordinator.last_update_success
+    assert portal.graph_failures[portal.meters[0]["node"]] == 0
+
+
+async def test_failing_meter_keeps_its_last_data(
+    recorder_mock, hass: HomeAssistant, portal, setup_entry
+) -> None:
+    """One meter failing twice does not blank the others."""
+    await hass.async_block_till_done()
+    coordinator = setup_entry.runtime_data
+    failing = portal.meters[0]
+    before = coordinator.data.meter_data(failing["id"])
+    assert before is not None
+    portal.graph_failures[failing["node"]] = 2
+
+    await coordinator.async_refresh()
+
+    assert coordinator.last_update_success
+    assert len(coordinator.data.meters) == len(portal.meters)
+    after = coordinator.data.meter_data(failing["id"])
+    assert after is not None
+    assert after.daily == before.daily
+
+
+async def test_failing_meter_without_same_day_data_fails_the_update(
+    recorder_mock, freezer, hass: HomeAssistant, portal, setup_entry
+) -> None:
+    """Stale data from an earlier day is not served as if it were current."""
+    await hass.async_block_till_done()
+    coordinator = setup_entry.runtime_data
+    freezer.tick(timedelta(days=1))
+    portal.graph_failures[portal.meters[0]["node"]] = 2
+
+    await coordinator.async_refresh()
+
+    assert not coordinator.last_update_success
