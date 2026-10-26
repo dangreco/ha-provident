@@ -1,5 +1,11 @@
 # Changelog
 
+## [2026.10.6](https://github.com/dangreco/ha-provident/compare/2026.10.5...2026.10.6)
+
+### Bug Fixes
+
+- honour a larger backfill, isolate per-meter failures, correct docs ([#13](https://github.com/dangreco/ha-provident/pull/13)) ([fd409d2](https://github.com/dangreco/ha-provident/commit/fd409d2b454aafa7d15c0bdfa635bded41eead22))
+
 ## [2026.10.5](https://github.com/dangreco/ha-provident/compare/2026.10.4...2026.10.5)
 
 ### Features
